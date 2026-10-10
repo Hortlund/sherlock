@@ -39,6 +39,9 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	// Match cmd/sherlock: workers retain advisory-lock connections while doing
+	// other queries. The CPU-dependent pgx default can deadlock four workers on CI.
+	cfg.MaxConns = 10
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

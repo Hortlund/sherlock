@@ -179,3 +179,11 @@ Fixed both review findings in `web/src/workspace.css`: saved finding feedback no
 Verification: `npm run build --prefix web` and `git diff --check` passed. A temporary Playwright script with intercepted API fixtures checked 1536×1024 and 390×844 viewports: both feedback choices update their visible selected state, selection remains visible after reload, a 120-character uninterrupted model ID stays within its row without document overflow, and the provider editor opens with the full model value and closes correctly. Page identity/content, framework overlay absence, and console/page-error checks passed. Desktop and mobile screenshots were inspected; script and screenshots remain outside the repository under `/tmp/sherlock-ui-fixes*`. The full backend/browser suite was not rerun for these CSS-only fixes.
 
 Rebuilt the existing demo with `docker compose up --build -d --wait app`; app and PostgreSQL are healthy. Existing installation data and credentials were preserved. Refresh `http://localhost:8080` to load the fixes.
+
+## 2026-10-11 — CI integration pool and cleanup repair
+
+GitHub Actions run 38088142964 timed out in `TestConcurrentScansSharingSourceComplete`: on the smaller runner, pgx's CPU-dependent default pool had four connections, all retained by the four concurrent scans' advisory locks. Their next queries could never acquire a connection. The integration/browser fixture now explicitly uses ten connections, matching `cmd/sherlock`. The concurrency regression has a 15-second context and drains every worker result before returning on failure.
+
+Application cleanup now skips Compose when setup has not created `.env`; test-database cleanup runs as its own `always()` step, including when application cleanup fails.
+
+Verification: reproduced the original timeout locally with `pool_max_conns=4`; the fixed concurrency test passed three consecutive race-enabled runs with the same DSN. `make lint test` and all 14 existing browser tests (`make e2e`) passed on the published-code baseline. Workflow YAML/cleanup conditions parsed successfully, and application cleanup passed without `.env`. The separate uncommitted UI redesign was not included in this CI repair. GitHub runner verification is tracked on the repair PR.
