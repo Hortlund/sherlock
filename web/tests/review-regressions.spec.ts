@@ -34,7 +34,7 @@ for (const terminal of ["completed", "cancelled"]) {
       } else body = { items: [] };
       await route.fulfill({ json: body });
     });
-    await page.goto("/investigations?id=run");
+    await page.goto("/investigations?id=run&view=activity");
     await expect(page).toHaveTitle("Sherlock — Reliability investigations");
     const progress = page.getByRole("list", { name: "Investigation progress" });
     await expect(progress).toContainText("Collecting evidence");

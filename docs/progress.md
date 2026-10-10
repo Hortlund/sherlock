@@ -154,3 +154,28 @@ Verification:
 Provider traffic remained simulated; no paid cloud calls or real external notifications were made. Prometheus/Loki adapters were unchanged, so their separate real-source suite was not rerun for these fixes.
 
 Rebuilt the existing local app with `docker compose up --build -d --wait app`. App/Postgres are healthy, `/readyz` returns `ready`, and setup still reports `initialized: true`. Existing installation data, credentials and the running demo source were preserved. Removed the disposable test database container/network after checks; no production volumes were removed. Refresh `http://localhost:8080` to load the fixes.
+
+
+## 2026-10-10 — Workspace UI and UX redesign
+
+Reorganized the workspace into grouped navigation, a useful overview, dedicated Settings sections, and separate investigation Report / AI analysis / Run activity views. Added consistent typography, spacing, status colors, responsive layouts and focused editors for connections, service mappings, AI providers and notification destinations. Evidence expands beside its observation; findings lifecycle actions are grouped, and service metadata no longer competes with a separate environment column. Shared primitives live in `web/src/components/WorkspaceUI.tsx`, with workspace styles separated from authentication styles.
+
+Verification:
+
+- `make lint unit` passed: Go formatting/vet, TypeScript and race-enabled unit/contract checks. Production frontend build passed. No backend/schema/dependency changes.
+- Final `make e2e`: all 17 Chromium tests passed. Existing real API/worker fixture journeys cover authentication, sources, scans, findings lifecycle, reports, both AI providers, notification delivery and earlier regressions. Three new cases cover section/deep-link/history behavior, skip-link focus, modal focus cycling/Escape/restoration, mobile navigation, report views and inline evidence. A focused rerun regenerated screenshots after making screenshot capture wait for loaded settings and disable transient animations.
+- Testing exposed and fixed a stale findings cache introduced by the new overview, keyboard focus escaping the final drawer control, and a skip link that would otherwise replace the Settings hash. Existing selectors were updated to use the new explicit views. No new runtime/console errors in the new journeys.
+- Inspected the running demo through Codex's in-app browser at 847px wide, including Settings, Services and inline investigation evidence. Used repository Playwright tests for repeatable 1536×1024 desktop, 847×900 tablet and 390×844 mobile checks. Relevant mobile pages have no document-level horizontal overflow; navigation/tables have contained scrolling.
+- Compared the generated settings/report concepts and final screenshots with `view_image`: navigation grouping, main/context columns, typography, white/gray/teal palette, copy hierarchy, controls and responsive stacking. Increased report reading size/context width, fixed the cramped account footer, preserved active-tab styling on hover and simplified the service table. Intentional differences retain real evidence wording, configured consent/state, existing icon metaphors and plain provider names; simulated fixture banners appear only in test screenshots.
+- Screenshot evidence remains outside the repository in `/tmp/sherlock-redesign/` and `/tmp/sherlock-foundation-qa/`. Design concepts are retained in `docs/design/`. Existing archived specs are unchanged.
+- Rebuilt the existing demo with `docker compose up --build -d --wait app`; app/Postgres healthy, `/readyz` ready and setup still initialized. Data, credentials and demo source preserved. No real cloud AI calls or external notification messages were made.
+
+Removed the disposable test database container/network after verification. Refresh `http://localhost:8080` to use the redesigned app. Proactive triage, tools/follow-up and inbound alerts remain planned Slices C–E.
+
+## 2026-10-10 — Workspace UI review fixes
+
+Fixed both review findings in `web/src/workspace.css`: saved finding feedback now has a tinted, bold, underlined selected state, and AI provider rows wrap long model IDs within their available width.
+
+Verification: `npm run build --prefix web` and `git diff --check` passed. A temporary Playwright script with intercepted API fixtures checked 1536×1024 and 390×844 viewports: both feedback choices update their visible selected state, selection remains visible after reload, a 120-character uninterrupted model ID stays within its row without document overflow, and the provider editor opens with the full model value and closes correctly. Page identity/content, framework overlay absence, and console/page-error checks passed. Desktop and mobile screenshots were inspected; script and screenshots remain outside the repository under `/tmp/sherlock-ui-fixes*`. The full backend/browser suite was not rerun for these CSS-only fixes.
+
+Rebuilt the existing demo with `docker compose up --build -d --wait app`; app and PostgreSQL are healthy. Existing installation data and credentials were preserved. Refresh `http://localhost:8080` to load the fixes.

@@ -1,10 +1,11 @@
+import { StatusBadge } from "../components/WorkspaceUI";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useOutletContext } from "react-router";
+import { Link, useOutletContext, useSearchParams } from "react-router";
 import { InvestigateButton } from "./Investigations";
 import { request } from "../api";
 import type { Session } from "../api";
-import { Heading, EvidenceList } from "./Sources";
+import { Heading, EvidenceList, useServices } from "./Sources";
 import type { Evidence, Service } from "./Sources";
 export type Coverage = { detector: string; status: string; reason: string };
 export type Candidate = {
@@ -129,11 +130,14 @@ export function RunStatus({ id }: { id: string }) {
 export function FindingsPage() {
   const session = useOutletContext<Session>(),
     cache = useQueryClient();
+  const [params] = useSearchParams();
+  const services = useServices();
   const [filter, setFilter] = useState(""),
     [cursor, setCursor] = useState(""),
-    [selected, setSelected] = useState("");
+    [selected, setSelected] = useState(params.get("id") ?? "");
   const findings = useQuery({
     queryKey: ["findings", filter, cursor],
+    staleTime: 0,
     queryFn: () =>
       request<{ items: Finding[]; next_cursor: string }>(
         `/findings?state=${filter}&cursor=${cursor}`,
@@ -191,117 +195,134 @@ export function FindingsPage() {
       {findings.isPending ? (
         <p role="status">Loading findings…</p>
       ) : findings.data?.items.length ? (
-        findings.data.items.map((f) => (
-          <article className="finding" key={f.id}>
-            <div className="finding-meta">
-              <span>{f.severity}</span>
-              <span>{f.state}</span>
-              <span>{f.origin === "demo" ? "Simulated" : "Live"}</span>
-              <time>{new Date(f.last_seen).toLocaleString()}</time>
-            </div>
-            <h2>{f.title}</h2>
-            <p>{f.description}</p>
-            {f.snoozed_until ? (
-              <p>Snoozed until {new Date(f.snoozed_until).toLocaleString()}</p>
-            ) : null}
-            <div className="row-actions">
-              <InvestigateButton serviceID={f.service_id} findingID={f.id} />
-              <button
-                onClick={() => setSelected(selected === f.id ? "" : f.id)}
-              >
-                {selected === f.id ? "Hide evidence" : "View evidence"}
-              </button>
-              {["new", "snoozed"].includes(f.state) ? (
-                <button
-                  disabled={action.isPending}
-                  onClick={() =>
-                    action.mutate({
-                      id: f.id,
-                      path: "state",
-                      body: { state: "acknowledged" },
-                    })
-                  }
-                >
-                  Acknowledge
-                </button>
-              ) : null}
-              {["new", "acknowledged"].includes(f.state) ? (
-                <button
-                  disabled={action.isPending}
-                  onClick={() =>
-                    action.mutate({
-                      id: f.id,
-                      path: "state",
-                      body: { state: "snoozed", snooze_hours: 24 },
-                    })
-                  }
-                >
-                  Snooze 24h
-                </button>
-              ) : null}
-              {["new", "acknowledged", "snoozed"].includes(f.state) ? (
-                <>
-                  <button
-                    disabled={action.isPending}
-                    onClick={() =>
-                      action.mutate({
-                        id: f.id,
-                        path: "state",
-                        body: { state: "resolved" },
-                      })
-                    }
-                  >
-                    Resolve
-                  </button>
-                  <button
-                    disabled={action.isPending}
-                    onClick={() =>
-                      action.mutate({
-                        id: f.id,
-                        path: "state",
-                        body: { state: "dismissed" },
-                      })
-                    }
-                  >
-                    Dismiss
-                  </button>
-                </>
-              ) : null}
-            </div>
-            {selected === f.id ? (
-              <div className="finding-detail">
-                <p>
-                  Current: {f.details.current.toFixed(3)} · Comparison:{" "}
-                  {f.details.baseline.toFixed(3)}
-                </p>
-                <StoredEvidence ids={f.details.evidence_ids} />
-                <details>
-                  <summary>Thresholds used</summary>
-                  <pre>{JSON.stringify(f.details.thresholds, null, 2)}</pre>
-                </details>
-                <div className="row-actions">
-                  <span>Was this useful?</span>
-                  {["useful", "not_useful"].map((v) => (
-                    <button
-                      key={v}
-                      aria-pressed={f.feedback === v}
-                      disabled={action.isPending}
-                      onClick={() =>
-                        action.mutate({
-                          id: f.id,
-                          path: "feedback",
-                          body: { feedback: v },
-                        })
-                      }
-                    >
-                      {v === "useful" ? "Useful" : "Not useful"}
-                    </button>
-                  ))}
-                </div>
+        [...findings.data.items]
+          .sort(
+            (a, b) =>
+              Number(b.id === params.get("id")) -
+              Number(a.id === params.get("id")),
+          )
+          .map((f) => (
+            <article className="finding" key={f.id}>
+              <div className="finding-meta">
+                <StatusBadge value={f.severity} />
+                <StatusBadge value={f.state} />
+                <span>{f.origin === "demo" ? "Simulated" : "Live"}</span>
+                <time>{new Date(f.last_seen).toLocaleString()}</time>
               </div>
-            ) : null}
-          </article>
-        ))
+              <div className="finding-service">
+                {services.data?.items.find((s) => s.id === f.service_id)
+                  ?.name ?? "Service finding"}
+              </div>
+              <h2>{f.title}</h2>
+              <p>{f.description}</p>
+              {f.snoozed_until ? (
+                <p>
+                  Snoozed until {new Date(f.snoozed_until).toLocaleString()}
+                </p>
+              ) : null}
+              <div className="row-actions">
+                <InvestigateButton serviceID={f.service_id} findingID={f.id} />
+                <button
+                  onClick={() => setSelected(selected === f.id ? "" : f.id)}
+                >
+                  {selected === f.id ? "Hide evidence" : "View evidence"}
+                </button>
+                <details className="finding-actions">
+                  <summary>Manage finding</summary>
+                  <div className="row-actions">
+                    {["new", "snoozed"].includes(f.state) ? (
+                      <button
+                        disabled={action.isPending}
+                        onClick={() =>
+                          action.mutate({
+                            id: f.id,
+                            path: "state",
+                            body: { state: "acknowledged" },
+                          })
+                        }
+                      >
+                        Acknowledge
+                      </button>
+                    ) : null}
+                    {["new", "acknowledged"].includes(f.state) ? (
+                      <button
+                        disabled={action.isPending}
+                        onClick={() =>
+                          action.mutate({
+                            id: f.id,
+                            path: "state",
+                            body: { state: "snoozed", snooze_hours: 24 },
+                          })
+                        }
+                      >
+                        Snooze 24h
+                      </button>
+                    ) : null}
+                    {["new", "acknowledged", "snoozed"].includes(f.state) ? (
+                      <>
+                        <button
+                          disabled={action.isPending}
+                          onClick={() =>
+                            action.mutate({
+                              id: f.id,
+                              path: "state",
+                              body: { state: "resolved" },
+                            })
+                          }
+                        >
+                          Resolve
+                        </button>
+                        <button
+                          disabled={action.isPending}
+                          onClick={() =>
+                            action.mutate({
+                              id: f.id,
+                              path: "state",
+                              body: { state: "dismissed" },
+                            })
+                          }
+                        >
+                          Dismiss
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </details>
+              </div>
+              {selected === f.id ? (
+                <div className="finding-detail">
+                  <p>
+                    Current: {f.details.current.toFixed(3)} · Comparison:{" "}
+                    {f.details.baseline.toFixed(3)}
+                  </p>
+                  <StoredEvidence ids={f.details.evidence_ids} />
+                  <details>
+                    <summary>Thresholds used</summary>
+                    <pre>{JSON.stringify(f.details.thresholds, null, 2)}</pre>
+                  </details>
+                  <div className="row-actions">
+                    <span>Was this useful?</span>
+                    {["useful", "not_useful"].map((v) => (
+                      <button
+                        key={v}
+                        aria-pressed={f.feedback === v}
+                        disabled={action.isPending}
+                        onClick={() =>
+                          action.mutate({
+                            id: f.id,
+                            path: "feedback",
+                            body: { feedback: v },
+                          })
+                        }
+                      >
+                        {v === "useful" ? "Useful" : "Not useful"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          ))
       ) : (
         <section className="empty-state">
           <h2>No findings in this view.</h2>

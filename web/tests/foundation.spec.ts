@@ -93,6 +93,7 @@ test("secure setup, persisted session, login, and password change on desktop and
     page.getByRole("heading", { name: "Overview", exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page
     .getByLabel("Current password", { exact: true })
@@ -211,6 +212,7 @@ test("scans compare both windows and findings retain lifecycle state", async ({
   await expect(
     error.getByText("Current: 0.120 · Comparison: 0.001"),
   ).toBeVisible();
+  await error.locator("summary").filter({ hasText: "Manage finding" }).click();
   await error.getByRole("button", { name: "Acknowledge", exact: true }).click();
   await expect(error.getByText("acknowledged", { exact: true })).toBeVisible();
   await page.screenshot({
@@ -272,9 +274,11 @@ test("investigation publishes grounded report with persistent progress and evide
   await expect(
     page.getByRole("heading", { name: "What remains unknown" }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Run activity", exact: true }).click();
   await expect(
     page.getByRole("list", { name: "Investigation progress" }),
   ).toContainText("reporting");
+  await page.getByRole("button", { name: "Report", exact: true }).click();
   await page
     .getByRole("button", { name: "Inspect supporting evidence (2)" })
     .last()
@@ -330,6 +334,12 @@ test("seeded overview loads within the local two-second target", async ({
     `Seeded overview p95 on this local test run: ${times[18]}ms (20 navigations)`,
   );
   expect(times[18]).toBeLessThan(2000);
-  await page.context().storageState({ path: "/tmp/sherlock-foundation-qa/notification-session.json" });
-  await page.context().storageState({ path: "/tmp/sherlock-foundation-qa/ai-session.json" });
+  await page
+    .context()
+    .storageState({
+      path: "/tmp/sherlock-foundation-qa/notification-session.json",
+    });
+  await page
+    .context()
+    .storageState({ path: "/tmp/sherlock-foundation-qa/ai-session.json" });
 });

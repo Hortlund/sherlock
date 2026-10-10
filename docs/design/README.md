@@ -14,4 +14,17 @@ Tokens: true white main background, cool gray `#f3f6f8` rail, slate `#101c26` te
 
 Allowed setup copy: sherlock; Your stack. Your evidence.; Reliability investigations, hosted by you.; Secure workspace; Connect a source; Map a service; Start monitoring; Read-only by design; SELF-HOSTED; Create your workspace; Set up the administrator account for this installation.; Setup token; Installation setup token; Find this in your local .env file.; Workspace name; My workspace; Email; you@example.com; Password; At least 12 characters; Create workspace; Credentials stay on your server.
 
-Login reuses the same form system with Welcome back / Sign in. The initial workspace explicitly states that source monitoring is not yet implemented; subsequent slices replace that temporary release-status content with actual functionality.
+Login reuses the same form system with Welcome back / Sign in. The first workspace used temporary release-status content; the delivered workspace now shows real monitoring, findings, investigations, and integration controls.
+
+
+## Workspace redesign
+
+The workspace uses grouped navigation (Workspace / Configuration), a 260px desktop rail, 44px content gutters, white surfaces, cool-gray `#f6f8fa` navigation, slate `#18252d` text and teal `#087f72` actions. Shared headings, status badges, controls and dividers replace page-specific styling. Report body text is 15px; primary page headings are 30px. There are no external runtime fonts or new UI dependencies.
+
+[Settings concept](settings-v2-concept.png) and [investigation concept](investigation-v2-concept.png) are the 1536×1024 design references. These images are design artifacts, not shipped raster interfaces. Actual API state and original evidence wording remain authoritative. Provider names use text, navigation uses the existing Lucide metaphors, and the workspace name is not a fake switcher. Selected navigation uses the same restrained teal treatment throughout.
+
+Settings exposes one section at a time: Account, Monitoring, AI providers, Notifications or System. Section hashes survive reloads and browser history. Provider rows precede consent/budgets and history, with usage and setup guidance in a secondary column. Connection, mapping, provider and destination forms use native modal drawers with focus cycling, Escape, and focus restoration.
+
+Investigation views separate Report, AI analysis and Run activity. Reports put observations beside unknowns and suggested checks; supporting evidence expands under the observation that cites it. Findings keep investigation/evidence actions prominent and group lifecycle actions under Manage finding. Service environment and origin sit under the service name to reduce table width.
+
+At tablet widths the secondary columns stack below the main content. At 700px and below, the sidebar becomes an expandable menu, forms use one column, and drawers fill the viewport. Settings navigation scrolls horizontally when necessary; tables retain their tabular structure in contained scroll regions. Motion is limited to short control/drawer transitions and respects reduced-motion preferences.

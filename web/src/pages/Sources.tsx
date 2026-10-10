@@ -1,3 +1,4 @@
+import { Drawer, PageHeading, StatusBadge } from "../components/WorkspaceUI";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -88,25 +89,7 @@ export function useServices() {
 function message(e: unknown) {
   return e instanceof Error ? e.message : "Request failed.";
 }
-export function Heading({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="page-heading">
-      <div>
-        <h1>{title}</h1>
-        <p className="page-description">{description}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
+export const Heading = PageHeading;
 export function ConnectionsPage() {
   const session = useOutletContext<Session>(),
     cache = useQueryClient(),
@@ -174,7 +157,7 @@ export function ConnectionsPage() {
           Add connection
         </button>
       </Heading>
-      {error || sources.error ? (
+      {editing === undefined && (error || sources.error) ? (
         <p role="alert" className="error">
           {error || message(sources.error)}
         </p>
@@ -203,9 +186,7 @@ export function ConnectionsPage() {
                   </td>
                   <td>{c.kind === "prometheus" ? "Prometheus" : "Loki"}</td>
                   <td>
-                    <span className={`source-status ${c.status}`}>
-                      {c.status}
-                    </span>
+                    <StatusBadge value={c.status} />
                     {c.last_error ? (
                       <small className="error-text">{c.last_error}</small>
                     ) : null}
@@ -298,105 +279,118 @@ export function ConnectionsPage() {
         </p>
       ) : null}
       {editing !== undefined ? (
-        <section className="editor-section">
-          <h2>{editing ? "Edit connection" : "Add a connection"}</h2>
-          <form key={editing?.id ?? "new"} onSubmit={submit}>
-            <Field
-              name="name"
-              label="Name"
-              defaultValue={editing?.name ?? ""}
-              maxLength={80}
-              required
-            />
-            <label className="select-field">
-              Source
-              <select
-                name="kind"
-                value={kind}
-                onChange={(e) => setKind(e.target.value)}
-              >
-                <option value="prometheus">Prometheus</option>
-                <option value="loki">Loki</option>
-              </select>
-            </label>
-            <Field
-              name="base_url"
-              label="Base URL"
-              type="url"
-              placeholder="https://prometheus.example.com"
-              defaultValue={editing?.base_url ?? ""}
-              required
-            />
-            <label className="select-field">
-              Authentication
-              <select
-                name="auth_mode"
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}
-              >
-                <option value="none">None</option>
-                <option value="bearer">Bearer token</option>
-                <option value="basic">Basic authentication</option>
-              </select>
-            </label>
-            {mode === "basic" ? (
-              <Field
-                name="username"
-                label="Username"
-                autoComplete="off"
-                required={!editing}
-              />
+        <Drawer
+          title={editing ? "Edit connection" : "Add a connection"}
+          onClose={() => setEditing(undefined)}
+        >
+          <section className="editor-section">
+            {error ? (
+              <p role="alert" className="error">
+                {error}
+              </p>
             ) : null}
-            {mode !== "none" ? (
+            <form
+              className="editor-form"
+              key={editing?.id ?? "new"}
+              onSubmit={submit}
+            >
               <Field
-                name="secret"
-                label={mode === "bearer" ? "Token" : "Source password"}
-                type="password"
-                autoComplete="new-password"
-                required={!editing}
-                hint={
-                  editing
-                    ? "Leave blank to retain the existing credential."
-                    : undefined
-                }
+                name="name"
+                label="Name"
+                defaultValue={editing?.name ?? ""}
+                maxLength={80}
+                required
               />
-            ) : null}
-            {kind === "loki" ? (
-              <Field
-                name="tenant"
-                label="Tenant (optional)"
-                defaultValue={editing?.tenant ?? ""}
-              />
-            ) : null}
-            <details>
-              <summary>Private certificate authority</summary>
               <label className="select-field">
-                CA certificate (PEM)
-                <textarea
-                  name="ca_pem"
-                  defaultValue={editing?.ca_pem ?? ""}
-                  rows={4}
-                  maxLength={8192}
-                />
+                Source
+                <select
+                  name="kind"
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value)}
+                >
+                  <option value="prometheus">Prometheus</option>
+                  <option value="loki">Loki</option>
+                </select>
               </label>
-            </details>
-            <p className="table-note">
-              Credentials are encrypted and never returned by the API.
-            </p>
-            <div className="form-actions">
-              <button className="primary compact" disabled={save.isPending}>
-                {save.isPending ? "Saving…" : "Save connection"}
-              </button>
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setEditing(undefined)}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </section>
+              <Field
+                name="base_url"
+                label="Base URL"
+                type="url"
+                placeholder="https://prometheus.example.com"
+                defaultValue={editing?.base_url ?? ""}
+                required
+              />
+              <label className="select-field">
+                Authentication
+                <select
+                  name="auth_mode"
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value)}
+                >
+                  <option value="none">None</option>
+                  <option value="bearer">Bearer token</option>
+                  <option value="basic">Basic authentication</option>
+                </select>
+              </label>
+              {mode === "basic" ? (
+                <Field
+                  name="username"
+                  label="Username"
+                  autoComplete="off"
+                  required={!editing}
+                />
+              ) : null}
+              {mode !== "none" ? (
+                <Field
+                  name="secret"
+                  label={mode === "bearer" ? "Token" : "Source password"}
+                  type="password"
+                  autoComplete="new-password"
+                  required={!editing}
+                  hint={
+                    editing
+                      ? "Leave blank to retain the existing credential."
+                      : undefined
+                  }
+                />
+              ) : null}
+              {kind === "loki" ? (
+                <Field
+                  name="tenant"
+                  label="Tenant (optional)"
+                  defaultValue={editing?.tenant ?? ""}
+                />
+              ) : null}
+              <details>
+                <summary>Private certificate authority</summary>
+                <label className="select-field">
+                  CA certificate (PEM)
+                  <textarea
+                    name="ca_pem"
+                    defaultValue={editing?.ca_pem ?? ""}
+                    rows={4}
+                    maxLength={8192}
+                  />
+                </label>
+              </details>
+              <p className="table-note">
+                Credentials are encrypted and never returned by the API.
+              </p>
+              <div className="form-actions">
+                <button className="primary compact" disabled={save.isPending}>
+                  {save.isPending ? "Saving…" : "Save connection"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setEditing(undefined)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </section>
+        </Drawer>
       ) : null}
     </>
   );
@@ -517,8 +511,12 @@ export function ServicesPage() {
         loki_id: f.get("loki_id"),
         monitoring: f.get("monitoring") === "on",
         mapping: {
-          prometheus_labels: f.get("prometheus_id") ? labels(f.get("prometheus_labels")) : undefined,
-          loki_labels: f.get("loki_id") ? labels(f.get("loki_labels")) : undefined,
+          prometheus_labels: f.get("prometheus_id")
+            ? labels(f.get("prometheus_labels"))
+            : undefined,
+          loki_labels: f.get("loki_id")
+            ? labels(f.get("loki_labels"))
+            : undefined,
           metric: String(f.get("metric") ?? ""),
           error_labels: f.get("error_labels")
             ? labels(f.get("error_labels"))
@@ -547,7 +545,7 @@ export function ServicesPage() {
           Map a service
         </button>
       </Heading>
-      {error || services.error ? (
+      {editing === undefined && (error || services.error) ? (
         <p role="alert" className="error">
           {error || message(services.error)}
         </p>
@@ -560,7 +558,6 @@ export function ServicesPage() {
             <thead>
               <tr>
                 <th>Service</th>
-                <th>Environment</th>
                 <th>Configured sources</th>
                 <th>Actions</th>
               </tr>
@@ -571,11 +568,11 @@ export function ServicesPage() {
                   <td>
                     <strong>{v.name}</strong>
                     <small>
+                      {v.environment} ·{" "}
                       {v.origin === "demo" ? "Simulated" : "Live"} · mapping v
                       {v.revision}
                     </small>
                   </td>
-                  <td>{v.environment}</td>
                   <td>
                     {[
                       v.prometheus_id ? "Metrics" : null,
@@ -636,132 +633,152 @@ export function ServicesPage() {
         </section>
       )}
       {editing !== undefined ? (
-        <section className="editor-section">
-          <h2>{editing ? "Edit service mapping" : "Map a service"}</h2>
-          <form key={editing?.id ?? "new"} onSubmit={submit}>
-            <Field
-              name="name"
-              label="Service name"
-              defaultValue={editing?.name ?? ""}
-              required
-              maxLength={80}
-            />
-            <Field
-              name="environment"
-              label="Environment"
-              defaultValue={editing?.environment ?? "production"}
-              required
-              maxLength={80}
-            />
-            {["prometheus", "loki"].map((kind) => (
-              <label key={kind} className="select-field">
-                {kind === "prometheus" ? "Prometheus source" : "Loki source"}
-                <select
-                  name={`${kind}_id`}
-                  defaultValue={
-                    kind === "prometheus"
-                      ? editing?.prometheus_id
-                      : editing?.loki_id
-                  }
-                >
-                  <option value="">Not configured</option>
-                  {sources.data?.items
-                    .filter((c) => c.kind === kind && c.enabled)
-                    .map((c) => (
-                      <option value={c.id} key={c.id}>
-                        {c.name} ({c.origin})
-                      </option>
-                    ))}
-                </select>
-              </label>
-            ))}
-            <Field
-              name="prometheus_labels"
-              label="Prometheus service labels"
-              placeholder="job=checkout"
-              defaultValue={labelsText(editing?.mapping.prometheus_labels ?? editing?.mapping.labels ?? {})}
-              hint="Exact matches for the selected metrics source, separated by commas."
-            />
-            <Field
-              name="loki_labels"
-              label="Loki service labels"
-              placeholder="app=checkout"
-              defaultValue={labelsText(editing?.mapping.loki_labels ?? editing?.mapping.labels ?? {})}
-              hint="Exact matches for the selected log source, separated by commas."
-            />
-            <Field
-              name="metric"
-              label="Request counter metric"
-              placeholder="http_requests_total"
-              defaultValue={editing?.mapping.metric ?? ""}
-              hint="Required for Prometheus. Use a monotonically increasing request counter."
-            />
-            <Field
-              name="error_labels"
-              label="Error response labels"
-              placeholder="status=500"
-              defaultValue={
-                editing ? labelsText(editing.mapping.error_labels) : ""
-              }
-              hint="Additional exact-match labels selecting error requests in the same counter."
-            />
-            <Field
-              name="error_pattern"
-              label="Error log pattern"
-              defaultValue={
-                editing?.mapping.error_pattern ?? "(?i)error|exception|timeout"
-              }
-              hint="Required when a Loki source is configured."
-            />
-            <Field
-              name="warning_pattern"
-              label="Warning log pattern"
-              defaultValue={
-                editing?.mapping.warning_pattern ?? "(?i)warn|retry"
-              }
-              hint="Required when a Loki source is configured."
-            />
-            <label className="select-field">
-              Additional sensitive log patterns (one regular expression per
-              line)
-              <textarea
-                name="sensitive_patterns"
-                rows={3}
+        <Drawer
+          title={editing ? "Edit service mapping" : "Map a service"}
+          onClose={() => setEditing(undefined)}
+        >
+          <section className="editor-section">
+            {error ? (
+              <p role="alert" className="error">
+                {error}
+              </p>
+            ) : null}
+            <form
+              className="editor-form"
+              key={editing?.id ?? "new"}
+              onSubmit={submit}
+            >
+              <Field
+                name="name"
+                label="Service name"
+                defaultValue={editing?.name ?? ""}
+                required
+                maxLength={80}
+              />
+              <Field
+                name="environment"
+                label="Environment"
+                defaultValue={editing?.environment ?? "production"}
+                required
+                maxLength={80}
+              />
+              {["prometheus", "loki"].map((kind) => (
+                <label key={kind} className="select-field">
+                  {kind === "prometheus" ? "Prometheus source" : "Loki source"}
+                  <select
+                    name={`${kind}_id`}
+                    defaultValue={
+                      kind === "prometheus"
+                        ? editing?.prometheus_id
+                        : editing?.loki_id
+                    }
+                  >
+                    <option value="">Not configured</option>
+                    {sources.data?.items
+                      .filter((c) => c.kind === kind && c.enabled)
+                      .map((c) => (
+                        <option value={c.id} key={c.id}>
+                          {c.name} ({c.origin})
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ))}
+              <Field
+                name="prometheus_labels"
+                label="Prometheus service labels"
+                placeholder="job=checkout"
+                defaultValue={labelsText(
+                  editing?.mapping.prometheus_labels ??
+                    editing?.mapping.labels ??
+                    {},
+                )}
+                hint="Exact matches for the selected metrics source, separated by commas."
+              />
+              <Field
+                name="loki_labels"
+                label="Loki service labels"
+                placeholder="app=checkout"
+                defaultValue={labelsText(
+                  editing?.mapping.loki_labels ?? editing?.mapping.labels ?? {},
+                )}
+                hint="Exact matches for the selected log source, separated by commas."
+              />
+              <Field
+                name="metric"
+                label="Request counter metric"
+                placeholder="http_requests_total"
+                defaultValue={editing?.mapping.metric ?? ""}
+                hint="Required for Prometheus. Use a monotonically increasing request counter."
+              />
+              <Field
+                name="error_labels"
+                label="Error response labels"
+                placeholder="status=500"
                 defaultValue={
-                  editing?.mapping.sensitive_patterns?.join("\n") ?? ""
+                  editing ? labelsText(editing.mapping.error_labels) : ""
                 }
+                hint="Additional exact-match labels selecting error requests in the same counter."
               />
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                name="store_excerpts"
-                defaultChecked={editing?.mapping.store_excerpts ?? true}
+              <Field
+                name="error_pattern"
+                label="Error log pattern"
+                defaultValue={
+                  editing?.mapping.error_pattern ??
+                  "(?i)error|exception|timeout"
+                }
+                hint="Required when a Loki source is configured."
               />
-              Store short redacted log excerpts
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                name="monitoring"
-                defaultChecked={editing?.monitoring ?? false}
+              <Field
+                name="warning_pattern"
+                label="Warning log pattern"
+                defaultValue={
+                  editing?.mapping.warning_pattern ?? "(?i)warn|retry"
+                }
+                hint="Required when a Loki source is configured."
               />
-              Enable scheduled monitoring
-            </label>
-            <div className="form-actions">
-              <button className="primary compact" disabled={save.isPending}>
-                Save mapping
-              </button>
-              <button
-                className="text-button"
-                type="button"
-                onClick={() => setEditing(undefined)}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </section>
+              <label className="select-field">
+                Additional sensitive log patterns (one regular expression per
+                line)
+                <textarea
+                  name="sensitive_patterns"
+                  rows={3}
+                  defaultValue={
+                    editing?.mapping.sensitive_patterns?.join("\n") ?? ""
+                  }
+                />
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  name="store_excerpts"
+                  defaultChecked={editing?.mapping.store_excerpts ?? true}
+                />
+                Store short redacted log excerpts
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  name="monitoring"
+                  defaultChecked={editing?.monitoring ?? false}
+                />
+                Enable scheduled monitoring
+              </label>
+              <div className="form-actions">
+                <button className="primary compact" disabled={save.isPending}>
+                  Save mapping
+                </button>
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => setEditing(undefined)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </section>
+        </Drawer>
       ) : null}
       {runID ? <RunStatus id={runID} /> : null}
       {preview ? (

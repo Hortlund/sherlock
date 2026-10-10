@@ -1,3 +1,4 @@
+import { Drawer, StatusBadge } from "../components/WorkspaceUI";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -240,20 +241,25 @@ export function NotificationSettings() {
         ) : null}
       </div>
       {editing !== undefined && services.data ? (
-        <DestinationForm
-          key={editing?.id ?? "new"}
-          destination={editing}
-          services={services.data?.items ?? []}
-          csrf={session.csrf_token}
-          onCancel={() => setEditing(undefined)}
-          onSaved={() => {
-            setEditing(undefined);
-            refresh();
-            setNotice(
-              "Destination saved. Changes cancel queued messages; only future events use the new configuration.",
-            );
-          }}
-        />
+        <Drawer
+          title={editing ? "Edit destination" : "Add destination"}
+          onClose={() => setEditing(undefined)}
+        >
+          <DestinationForm
+            key={editing?.id ?? "new"}
+            destination={editing}
+            services={services.data?.items ?? []}
+            csrf={session.csrf_token}
+            onCancel={() => setEditing(undefined)}
+            onSaved={() => {
+              setEditing(undefined);
+              refresh();
+              setNotice(
+                "Destination saved. Changes cancel queued messages; only future events use the new configuration.",
+              );
+            }}
+          />
+        </Drawer>
       ) : null}
       {preview !== undefined ? (
         <div className="notification-preview">
@@ -287,7 +293,8 @@ export function NotificationSettings() {
             <summary>
               <strong>{d.destination_name}</strong> ·{" "}
               {d.test ? "Synthetic test" : `${d.event_count} event(s)`} ·{" "}
-              <span>{d.state}</span> · {new Date(d.created_at).toLocaleString()}
+              <StatusBadge value={d.state} /> ·{" "}
+              {new Date(d.created_at).toLocaleString()}
             </summary>
             <p>
               {d.last_error ||
@@ -389,7 +396,6 @@ function DestinationForm({
   }
   return (
     <form className="notification-form" onSubmit={submit}>
-      <h3>{destination ? "Edit destination" : "New destination"}</h3>
       <Field
         name="name"
         label="Destination name"

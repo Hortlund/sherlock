@@ -92,3 +92,12 @@ Official provider and webhook references are linked in the active specification.
 - Bind asynchronous preview responses to a selection generation and check the selected provider again before sending. Switching providers invalidates pending previews, including when switching back.
 - Page AI operational history by descending `(created_at, id)`, with workspace/investigation-scoped cursors. Both Settings and investigation history expose older pages so retained unknown charges remain reconcilable.
 - Dispatch the freshly rebuilt, digest-verified compact payload. Persisted JSONB remains a lifecycle gate, but its whitespace normalization must not change the admitted request bytes or bound.
+
+
+## 2026-10-10 — Workspace information architecture
+
+- Group workspace reading flows separately from configuration. Split Settings by URL hash and investigation detail by a `view` query parameter, keeping existing AI/notification deep links valid.
+- Reuse shared React/CSS primitives and native modal dialogs. Drawers keep creation/editing close to their list and provide explicit keyboard focus cycling, Escape and focus restoration.
+- Keep report observations, limitations and manual checks together while separating optional AI controls and execution activity. Expand evidence next to its citation. All production content still comes from the existing API.
+- Refetch findings and overview counts when their views mount. The new overview shares the findings cache; its earlier empty response must not hide results from a scan just completed elsewhere.
+- Preserve the Go/Postgres/River architecture, provider consent, notification routing and deterministic workflows. This is a usability revision of delivered Slices A/B, not delivery of planned proactive features.

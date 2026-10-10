@@ -99,7 +99,7 @@ test("late provider previews cannot overwrite the current selection", async ({
     await route.fulfill({ json: body });
   });
   try {
-    await page.goto("/investigations?id=run");
+    await page.goto("/investigations?id=run&view=ai");
     const analysis = page.locator(".ai-analysis");
     const select = analysis.getByLabel("Analysis provider");
     await select.selectOption("openai");

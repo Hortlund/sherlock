@@ -24,17 +24,6 @@ export function OperationalSettings() {
     queryKey: ["settings"],
     queryFn: () => request<Config>("/settings"),
   });
-  const health = useQuery({
-    queryKey: ["system"],
-    queryFn: () =>
-      request<{
-        database: string;
-        queued: number;
-        running: number;
-        failed: number;
-      }>("/system"),
-    refetchInterval: 10000,
-  });
   const save = useMutation({
     mutationFn: (body: Config) =>
       request("/settings", { body, csrf: session.csrf_token }),
@@ -70,7 +59,7 @@ export function OperationalSettings() {
   ];
   return (
     <>
-      <section className="settings-section">
+      <section className="settings-section monitoring-settings">
         <h2>Monitoring and evidence</h2>
         <p>
           Current and comparison windows together must fit within two hours. New
@@ -93,19 +82,21 @@ export function OperationalSettings() {
             save.mutate(next);
           }}
         >
-          {fields.map(([key, label, min, max, step]) => (
-            <Field
-              key={key}
-              name={key}
-              label={label}
-              type="number"
-              min={min}
-              max={max}
-              step={step}
-              defaultValue={key === "error_delta" ? c[key] * 100 : c[key]}
-              required
-            />
-          ))}
+          <div className="form-grid">
+            {fields.map(([key, label, min, max, step]) => (
+              <Field
+                key={key}
+                name={key}
+                label={label}
+                type="number"
+                min={min}
+                max={max}
+                step={step}
+                defaultValue={key === "error_delta" ? c[key] * 100 : c[key]}
+                required
+              />
+            ))}
+          </div>
           <fieldset>
             <legend>Enabled detectors</legend>
             {["new_exception", "warning_burst", "error_rate"].map((d) => (
@@ -132,21 +123,37 @@ export function OperationalSettings() {
           </button>
         </form>
       </section>
-      <section className="settings-section">
-        <h2>System health</h2>
-        {health.data ? (
-          <p>
-            Database {health.data.database} · {health.data.queued} queued ·{" "}
-            {health.data.running} running · {health.data.failed} failed runs
-          </p>
-        ) : (
-          <p>{health.error?.message ?? "Checking health…"}</p>
-        )}
-        <p>
-          Up to 4 workers and 2 concurrent requests per connection. Each run has
-          a 90-second deadline and a 12-request limit, retained across retries.
-        </p>
-      </section>
     </>
+  );
+}
+
+export function SystemSettings() {
+  const health = useQuery({
+    queryKey: ["system"],
+    queryFn: () =>
+      request<{
+        database: string;
+        queued: number;
+        running: number;
+        failed: number;
+      }>("/system"),
+    refetchInterval: 10000,
+  });
+  return (
+    <section className="settings-section">
+      <h2>System health</h2>
+      {health.data ? (
+        <p>
+          Database {health.data.database} · {health.data.queued} queued ·{" "}
+          {health.data.running} running · {health.data.failed} failed runs
+        </p>
+      ) : (
+        <p>{health.error?.message ?? "Checking health…"}</p>
+      )}
+      <p>
+        Up to 4 workers and 2 concurrent requests per connection. Each run has a
+        90-second deadline and a 12-request limit, retained across retries.
+      </p>
+    </section>
   );
 }

@@ -50,7 +50,7 @@ test("notification setup, preview, demo alerts, failed delivery and bounded retr
       ),
     );
     await page.context().addCookies(state.cookies);
-    await page.goto("/settings");
+    await page.goto("/settings#notifications");
     await page
       .getByRole("button", { name: "Add destination", exact: true })
       .click();
@@ -97,7 +97,7 @@ test("notification setup, preview, demo alerts, failed delivery and bounded retr
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBeTruthy();
-    await page.locator("#notifications").screenshot({
+    await page.getByRole("dialog").screenshot({
       path: "/tmp/sherlock-notifications-mobile.png",
       animations: "disabled",
     });
@@ -147,6 +147,9 @@ test("notification setup, preview, demo alerts, failed delivery and bounded retr
       ),
     ).toBeTruthy();
     await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await page
+      .getByRole("link", { name: "Notifications", exact: true })
+      .click();
     const history = page.locator(".notification-history");
     await expect(
       history.locator("summary").filter({ hasText: "sent" }),

@@ -105,6 +105,9 @@ test("AI providers: setup, preview, report, fallback, cancellation and budgets",
   ).toBeVisible({ timeout: 15000 });
   const analysis = page.locator(".ai-analysis");
   async function send(kind: string) {
+    await page
+      .getByRole("button", { name: "AI analysis", exact: true })
+      .click();
     await analysis
       .getByLabel("Analysis provider")
       .selectOption(providers[kind]);
@@ -181,8 +184,9 @@ test("AI providers: setup, preview, report, fallback, cancellation and budgets",
       analysis.locator(".ai-history").first().locator("summary"),
     ).toContainText(terminal, { timeout: 15000 });
     await expect(analysis).toContainText(
-      "The deterministic report above remains available.",
+      "The deterministic report remains available in the Report tab.",
     );
+    await page.getByRole("button", { name: "Report", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "What the evidence shows" }),
     ).toBeVisible();

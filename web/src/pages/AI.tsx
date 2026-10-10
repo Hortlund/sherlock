@@ -1,3 +1,5 @@
+import { Plus, ArrowRight } from "lucide-react";
+import { Drawer, StatusBadge } from "../components/WorkspaceUI";
 import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -139,6 +141,7 @@ export function AISettings() {
   });
   const [editing, setEditing] = useState<Provider | null | undefined>();
   const [notice, setNotice] = useState("");
+  const [newKind, setNewKind] = useState("openai");
   const refresh = () => {
     void cache.invalidateQueries({ queryKey: ["ai-settings"] });
     void cache.invalidateQueries({ queryKey: ["ai-runs"] });
@@ -165,145 +168,208 @@ export function AISettings() {
   const data = settings.data;
   return (
     <section className="settings-section ai-settings" id="ai-settings">
-      <h2>AI providers</h2>
-      <p>
-        Analyze existing investigations with OpenAI or Anthropic. Service data
-        is sent only when workspace processing, a provider, and the selected
-        service are enabled. Synthetic capability tests send no service
-        telemetry.
-      </p>
-      {data.fixture ? (
-        <p className="notification-note">
-          SIMULATED PROVIDER FIXTURE — responses and costs are test data. No
-          cloud calls.
-        </p>
-      ) : null}
-      <p>
-        Model IDs and prices are your configuration assumptions. Use your
-        provider's current standard input/output prices, in USD per million
-        tokens. API usage is separate from chat subscriptions. A successful
-        synthetic test checks this model's response contract, not analysis
-        accuracy.
-      </p>
-      <div className="row-actions">
-        <a
-          href="https://developers.openai.com/api/docs/pricing"
-          target="_blank"
-          rel="noreferrer"
-        >
-          OpenAI pricing
-        </a>
-        <a
-          href="https://platform.claude.com/docs/en/about-claude/pricing"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Anthropic pricing
-        </a>
-      </div>
-      <PolicyForm
-        key={data.policy.revision}
-        policy={data.policy}
-        csrf={session.csrf_token}
-        onSaved={refresh}
-      />
-      <p>
-        Today's accounted usage: {money(data.spent_today)} · Outstanding
-        reservations: {money(data.reserved)}. UTC daily reset; uncertain
-        reservations carry forward until reconciled.
-      </p>
-      <p>
-        Admission uses a conservative input estimate and a 2,048-token output
-        ceiling, including reported reasoning usage. One provider call per run;
-        interrupted calls are not automatically replayed. Your provider's
-        invoice may differ from configured estimates.
-      </p>
-      <button className="text-button" onClick={() => setEditing(null)}>
-        Add AI provider
-      </button>
-      {data.providers.map((p) => (
-        <article className="ai-provider" key={p.id}>
-          <h3>
-            {p.kind === "openai" ? "OpenAI" : "Anthropic"} · {p.model}
-          </h3>
-          <p>
-            {p.enabled ? "Enabled" : "Disabled"} · Capability: {p.capability} ·
-            Encrypted key stored · {p.services.length} allowed service(s)
-          </p>
-          <p>
-            {p.allow_demo ? "Demo allowed" : "Live only"} ·{" "}
-            {p.allow_excerpts
-              ? "Redacted excerpts allowed where service mapping permits"
-              : "Counts only; no excerpts"}
-          </p>
-          <div className="row-actions">
-            <button onClick={() => setEditing(p)}>Edit {p.kind}</button>
+      <div className="settings-columns">
+        <div className="settings-primary">
+          <div className="section-heading">
+            <div>
+              <h2>AI providers</h2>
+              <p>Choose where your investigation evidence can be analyzed.</p>
+            </div>
             <button
-              disabled={!p.enabled || !data.policy.enabled || action.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Send a synthetic capability test to ${p.kind}/${p.model}? It can incur API charges within your budget. No service telemetry is included.`,
-                  )
-                )
-                  action.mutate({
-                    path: `/ai/providers/${p.id}/test`,
-                    body: { confirm: true },
-                  });
-              }}
+              className="primary compact"
+              onClick={() => setEditing(null)}
             >
-              Test {p.kind}
-            </button>
-            <button
-              disabled={action.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Delete this provider key and local generated content? Pending work is cancelled; transmitted data cannot be recalled.",
-                  )
-                )
-                  action.mutate({
-                    path: `/ai/providers/${p.id}/delete`,
-                    body: {},
-                  });
-              }}
-            >
-              Delete {p.kind}
+              <Plus size={16} />
+              Add AI provider
             </button>
           </div>
-        </article>
-      ))}
-      {editing !== undefined && services.data ? (
-        <ProviderForm
-          key={editing?.id ?? "new"}
-          provider={editing}
-          services={services.data.items}
-          csrf={session.csrf_token}
-          onCancel={() => setEditing(undefined)}
-          onSaved={() => {
-            setEditing(undefined);
-            refresh();
-            setNotice(
-              "Provider saved. Run a synthetic test before analyzing evidence. Edits cancel pending work and clear earlier AI content for this provider.",
-            );
-          }}
-        />
-      ) : null}
-      {notice ? <p role="status">{notice}</p> : null}
-      {action.error || services.error || runs.error ? (
-        <p role="alert" className="error">
-          {(action.error || services.error || runs.error)?.message}
-        </p>
-      ) : null}
-      <h3>AI usage and capability tests</h3>
-      <button className="text-button" onClick={refresh}>
-        Refresh AI status
-      </button>
-      {runs.data?.items.map((run) => (
-        <RunHistory key={run.id} run={run} />
-      ))}
-      <MoreAIRuns runs={runs} />
-      {runs.data?.items.length === 0 ? <p>No AI calls yet.</p> : null}
+          {data.fixture ? (
+            <p className="notification-note">
+              SIMULATED PROVIDER FIXTURE — responses and costs are test data. No
+              cloud calls.
+            </p>
+          ) : null}
+          {data.providers.length === 0 ? (
+            <div className="provider-options">
+              {["OpenAI", "Anthropic"].map((name) => (
+                <div className="provider-option" key={name}>
+                  <div>
+                    <h3>{name}</h3>
+                    <p>Not configured</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setNewKind(name.toLowerCase());
+                      setEditing(null);
+                    }}
+                  >
+                    Configure {name}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {data.providers.map((p) => (
+            <article className="ai-provider" key={p.id}>
+              <h3>
+                {p.kind === "openai" ? "OpenAI" : "Anthropic"} · {p.model}
+              </h3>
+              <p>
+                {p.enabled ? "Enabled" : "Disabled"} · Capability:{" "}
+                {p.capability} · Encrypted key stored · {p.services.length}{" "}
+                allowed service(s)
+              </p>
+              <p>
+                {p.allow_demo ? "Demo allowed" : "Live only"} ·{" "}
+                {p.allow_excerpts
+                  ? "Redacted excerpts allowed where service mapping permits"
+                  : "Counts only; no excerpts"}
+              </p>
+              <div className="row-actions">
+                <button onClick={() => setEditing(p)}>Edit {p.kind}</button>
+                <button
+                  disabled={
+                    !p.enabled || !data.policy.enabled || action.isPending
+                  }
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Send a synthetic capability test to ${p.kind}/${p.model}? It can incur API charges within your budget. No service telemetry is included.`,
+                      )
+                    )
+                      action.mutate({
+                        path: `/ai/providers/${p.id}/test`,
+                        body: { confirm: true },
+                      });
+                  }}
+                >
+                  Test {p.kind}
+                </button>
+                <button
+                  disabled={action.isPending}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Delete this provider key and local generated content? Pending work is cancelled; transmitted data cannot be recalled.",
+                      )
+                    )
+                      action.mutate({
+                        path: `/ai/providers/${p.id}/delete`,
+                        body: {},
+                      });
+                  }}
+                >
+                  Delete {p.kind}
+                </button>
+              </div>
+            </article>
+          ))}
+          {editing !== undefined && services.data ? (
+            <Drawer
+              title={editing ? "Edit AI provider" : "Add AI provider"}
+              onClose={() => setEditing(undefined)}
+            >
+              <ProviderForm
+                key={editing?.id ?? "new"}
+                provider={editing}
+                initialKind={newKind}
+                services={services.data.items}
+                csrf={session.csrf_token}
+                onCancel={() => setEditing(undefined)}
+                onSaved={() => {
+                  setEditing(undefined);
+                  refresh();
+                  setNotice(
+                    "Provider saved. Run a synthetic test before analyzing evidence. Edits cancel pending work and clear earlier AI content for this provider.",
+                  );
+                }}
+              />
+            </Drawer>
+          ) : null}
+          <PolicyForm
+            key={data.policy.revision}
+            policy={data.policy}
+            csrf={session.csrf_token}
+            onSaved={refresh}
+          />
+          {notice ? <p role="status">{notice}</p> : null}
+          {action.error || services.error || runs.error ? (
+            <p role="alert" className="error">
+              {(action.error || services.error || runs.error)?.message}
+            </p>
+          ) : null}
+          <h3>AI usage and capability tests</h3>
+          <button className="text-button" onClick={refresh}>
+            Refresh AI status
+          </button>
+          {runs.data?.items.map((run) => (
+            <RunHistory key={run.id} run={run} />
+          ))}
+          <MoreAIRuns runs={runs} />
+          {runs.data?.items.length === 0 ? <p>No AI calls yet.</p> : null}
+        </div>
+        <aside className="context-rail">
+          <h3>Usage today</h3>
+          <p className="usage-amount">{money(data.spent_today)}</p>
+          <p>
+            Reserved{" "}
+            <strong className="usage-reserved">{money(data.reserved)}</strong>
+          </p>
+          <p className="field-hint">
+            UTC daily reset. Uncertain reservations carry forward until
+            reconciled.
+          </p>
+          <div className="context-section">
+            <h3>Before you begin</h3>
+            <ol className="checklist">
+              <li>
+                <strong>Enable processing</strong>
+                <p>Allow external AI processing and set a budget.</p>
+              </li>
+              <li>
+                <strong>Choose allowed services</strong>
+                <p>
+                  Configure a provider and select which services can share
+                  evidence.
+                </p>
+              </li>
+              <li>
+                <strong>Test your model</strong>
+                <p>Run a synthetic capability test before an investigation.</p>
+              </li>
+            </ol>
+          </div>
+          <details className="help-disclosure">
+            <summary>Data sharing and limits</summary>
+            <p>
+              Only explicitly allowed service evidence is sent. Model IDs and
+              prices are your configuration assumptions; API usage is separate
+              from chat subscriptions.
+            </p>
+            <p>
+              Admission estimates input and allows up to 2,048 output tokens.
+              Interrupted calls are not automatically replayed. Your provider's
+              invoice may differ.
+            </p>
+            <a
+              className="context-link"
+              href="https://developers.openai.com/api/docs/pricing"
+              target="_blank"
+              rel="noreferrer"
+            >
+              OpenAI pricing <ArrowRight size={14} />
+            </a>
+            <a
+              className="context-link"
+              href="https://platform.claude.com/docs/en/about-claude/pricing"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Anthropic pricing <ArrowRight size={14} />
+            </a>
+          </details>
+        </aside>
+      </div>
     </section>
   );
 }
@@ -331,33 +397,35 @@ function PolicyForm({
     });
   }
   return (
-    <form className="notification-form" onSubmit={submit}>
+    <form className="notification-form policy-form" onSubmit={submit}>
       <h3>Workspace consent and budgets</h3>
       <label className="checkbox-field">
         <input type="checkbox" name="enabled" defaultChecked={policy.enabled} />
         Allow external AI processing for explicitly selected services
       </label>
-      <Field
-        label="Daily AI budget (USD)"
-        name="daily"
-        type="number"
-        min="0"
-        max="1000"
-        step="0.000001"
-        required
-        defaultValue={policy.daily_limit / 1e6}
-      />
-      <Field
-        label="Per-run AI budget (USD)"
-        name="run"
-        type="number"
-        min="0"
-        max="1000"
-        step="0.000001"
-        required
-        defaultValue={policy.run_limit / 1e6}
-      />
-      <p>
+      <div className="form-grid">
+        <Field
+          label="Daily AI budget (USD)"
+          name="daily"
+          type="number"
+          min="0"
+          max="1000"
+          step="0.000001"
+          required
+          defaultValue={policy.daily_limit / 1e6}
+        />
+        <Field
+          label="Per-run AI budget (USD)"
+          name="run"
+          type="number"
+          min="0"
+          max="1000"
+          step="0.000001"
+          required
+          defaultValue={policy.run_limit / 1e6}
+        />
+      </div>
+      <p className="field-hint">
         Changing budgets cancels queued/in-flight work. Disabling also erases
         local AI content. Provider retention follows your account terms;
         transmitted data cannot be recalled.
@@ -371,12 +439,14 @@ function PolicyForm({
 }
 function ProviderForm({
   provider,
+  initialKind = "openai",
   services,
   csrf,
   onSaved,
   onCancel,
 }: {
   provider: Provider | null;
+  initialKind?: string;
   services: { id: string; name: string; origin: string }[];
   csrf: string;
   onSaved: () => void;
@@ -411,13 +481,12 @@ function ProviderForm({
   }
   return (
     <form className="notification-form" onSubmit={submit}>
-      <h3>{provider ? "Edit AI provider" : "New AI provider"}</h3>
       <label className="select-field">
         Provider
         <select
           aria-label="AI provider"
           name="kind"
-          defaultValue={provider?.kind ?? "openai"}
+          defaultValue={provider?.kind ?? initialKind}
           disabled={!!provider}
         >
           <option value="openai">OpenAI</option>
@@ -546,7 +615,7 @@ function RunHistory({ run }: { run: AIRun }) {
         {run.purpose === "test"
           ? "Synthetic capability test"
           : "Evidence analysis"}{" "}
-        · <strong>{run.state}</strong> ·{" "}
+        · <StatusBadge value={run.state} /> ·{" "}
         {new Date(run.created_at).toLocaleString()}
       </summary>
       <p>{run.reason}</p>
@@ -830,8 +899,8 @@ export function AIAnalysis({
             </div>
           ) : !active(latest) ? (
             <p>
-              The deterministic report above remains available. AI content may
-              be unavailable, deleted, expired, or withheld.
+              The deterministic report remains available in the Report tab. AI
+              content may be unavailable, deleted, expired, or withheld.
             </p>
           ) : null}
         </>
