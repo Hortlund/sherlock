@@ -1,0 +1,15 @@
+# Infra Sherlock — Agent instructions
+
+- Read `SPEC.md` before changing architecture or interfaces. Version 1.2 is active: Sections 1–12 describe the delivered deterministic foundation; Sections 14–20 define Phase 2; see the plan and progress for delivered notifications/reactive AI and remaining proactive/tool work.
+- Archives under `reference/v1.0/` and `reference/v1.1/` are historical, not current instructions. Preserve them unchanged.
+- The user authorized Phase 2 notifications and OpenAI/Anthropic integration; Slices A/B are delivered. Follow project-root `docs/phase2-plan.md`, keep the app bootable, and verify each delivered slice.
+- Keep Go, React/TypeScript, PostgreSQL, and River in a modular monolith. Preserve the working no-AI path, independent source selectors, stable fingerprints, and findings lifecycle.
+- Phase 2 scope: OpenAI and Anthropic, optional OpenAI Decisions/structured triage, reactive/proactive bounded investigation, Slack/Discord/signed generic outbound webhooks, and a later authenticated inbound alert slice.
+- Defer Grafana discovery, Kubernetes, traces, generic MCP, local model hosting, AI Daily Brief, two-way chat bots, additional detectors, and remediation. Do not restore the original broad P0 automatically.
+- Telemetry remains read-only. AI/tool output cannot choose arbitrary queries, tools, URLs, recipients, or production changes. Enforce scope, time, budgets, coverage, and evidence provenance in Go.
+- External provider calls require configured workspace/service egress consent. Notifications require an enabled destination/rule or explicit test send. All new secrets must participate in encryption, key rotation, deletion, and backup/restore.
+- Keep detection and policy-mandated alerts independent of model availability/recommendations. Validate structured output; acknowledge that citations do not prove causality and model scores are not calibrated incident probabilities.
+- Use separate bounded telemetry, AI, and delivery workers. Persist events, budgets, checkpoints, cooldowns, and retries. State honestly that external requests may have ambiguous outcomes; do not claim exactly-once billing or message delivery.
+- Keep synthetic demo data visibly separate from live evidence. Demo external delivery is opt-in; no cloud credentials are required for the baseline demo or fixture tests.
+- Verify current official provider/notification APIs during implementation. Add relevant unit, PostgreSQL, contract, scenario-evaluation, and Playwright coverage; distinguish fixtures from actual provider/platform tests.
+- Keep project-root `docs/progress.md`, `docs/decisions.md`, and the implementation plan current. Planned behavior must never be reported as shipped or tested.

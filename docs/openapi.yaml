@@ -1,0 +1,3267 @@
+openapi: 3.1.0
+info:
+  title: Sherlock API
+  version: 0.2.0
+  description: Mutations require application/json and the configured Origin. Authenticated mutations also require X-CSRF-Token from /me. HTTPS installations use the __Host-sherlock_session cookie instead of sherlock_session.
+servers:
+  - url: /
+security:
+  - session: []
+paths:
+  /healthz:
+    get:
+      security: []
+      responses:
+        "200": { description: Process is alive }
+  /readyz:
+    get:
+      security: []
+      responses:
+        "200": { description: Database is reachable }
+        "503": { description: Database unavailable }
+  /api/v1/setup/status:
+    get:
+      security: []
+      responses:
+        "200":
+          description: Initialization state; no credentials or user data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [initialized]
+                properties:
+                  initialized: { type: boolean }
+  /api/v1/setup/bootstrap:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [setup_token, workspace_name, email, password]
+              properties:
+                setup_token: { type: string, writeOnly: true }
+                workspace_name: { type: string, minLength: 1, maxLength: 80 }
+                email: { type: string, format: email }
+                password:
+                  {
+                    type: string,
+                    minLength: 12,
+                    writeOnly: true,
+                    description: At most 256 UTF-8 bytes,
+                  }
+      responses:
+        "201":
+          {
+            description: Created workspace/admin and issued session cookie plus csrf_token,
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/login:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string, writeOnly: true }
+      responses:
+        "200": { description: Issued session cookie and csrf_token }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /api/v1/me:
+    get:
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, workspace, csrf_token, expires_at]
+                properties:
+                  user:
+                    type: object
+                    required: [id, email]
+                    properties:
+                      id: { type: string, format: uuid }
+                      email: { type: string }
+                  workspace:
+                    type: object
+                    required: [id, name]
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: string }
+                  csrf_token: { type: string }
+                  expires_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/logout:
+    post:
+      parameters:
+        - { $ref: "#/components/parameters/CSRF" }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200": { description: Session revoked and cookie cleared }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/auth/password:
+    post:
+      parameters:
+        - { $ref: "#/components/parameters/CSRF" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, writeOnly: true }
+                new_password:
+                  {
+                    type: string,
+                    minLength: 12,
+                    writeOnly: true,
+                    description: At most 256 UTF-8 bytes,
+                  }
+      responses:
+        "200": { description: Password changed; all user sessions revoked }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /api/v1/connections:
+    {
+      "get":
+        {
+          "summary": "List up to 100 active source configurations",
+          "parameters":
+            [
+              {
+                "name": "cursor",
+                "in": "query",
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "List up to 100 active source configurations",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        {
+                                          "$ref": "#/components/schemas/Connection",
+                                        },
+                                    },
+                                  "next_cursor": { "type": "string" },
+                                },
+                              "required": ["items", "next_cursor"],
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+      "post":
+        {
+          "summary": "Create encrypted source configuration",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Create encrypted source configuration",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/Connection" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/ConnectionInput" },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/connections/{id}:
+    {
+      "post":
+        {
+          "summary": "Edit source configuration and invalidate related mapping revisions",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Edit source configuration and invalidate related mapping revisions",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/Connection" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/ConnectionInput" },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/connections/{id}/test:
+    {
+      "post":
+        {
+          "summary": "Test API access; service signal coverage is separate",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Test API access; service signal coverage is separate",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/Connection" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "type": "object", "properties": {} } },
+                },
+            },
+        },
+    }
+  /api/v1/connections/{id}/labels:
+    {
+      "get":
+        {
+          "summary": "Get bounded label-name suggestions",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Get bounded label-name suggestions",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "labels":
+                                    {
+                                      "type": "array",
+                                      "items": { "type": "string" },
+                                    },
+                                  "limited": { "type": "boolean" },
+                                },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/connections/{id}/state:
+    {
+      "post":
+        {
+          "summary": "Enable, disable or soft-delete source and erase deleted credential",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Enable, disable or soft-delete source and erase deleted credential",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties": { "ok": { "type": "boolean" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "properties":
+                            {
+                              "action":
+                                {
+                                  "type": "string",
+                                  "enum": ["enable", "disable", "delete"],
+                                },
+                            },
+                          "required": ["action"],
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/demo:
+    {
+      "post":
+        {
+          "summary": "Configure separate synthetic adapter-backed service",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "201":
+                {
+                  "description": "Configure separate synthetic adapter-backed service",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                { "service_id": { "type": "string" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+              "200":
+                {
+                  "description": "Existing demo service returned",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                { "service_id": { "type": "string" } },
+                            },
+                        },
+                    },
+                },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "type": "object", "properties": {} } },
+                },
+            },
+        },
+    }
+  /api/v1/services:
+    {
+      "get":
+        {
+          "summary": "List mapped services and latest scan states",
+          "parameters":
+            [
+              {
+                "name": "cursor",
+                "in": "query",
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "List mapped services and latest scan states",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        {
+                                          "$ref": "#/components/schemas/Service",
+                                        },
+                                    },
+                                  "next_cursor": { "type": "string" },
+                                },
+                              "required": ["items", "next_cursor"],
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+      "post":
+        {
+          "summary": "Create scoped service mapping",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Create scoped service mapping",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema": { "$ref": "#/components/schemas/Service" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema": { "$ref": "#/components/schemas/ServiceInput" },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/services/{id}:
+    {
+      "post":
+        {
+          "summary": "Update mapping and advance revision",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Update mapping and advance revision",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema": { "$ref": "#/components/schemas/Service" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema": { "$ref": "#/components/schemas/ServiceInput" },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/services/{id}/preview:
+    {
+      "post":
+        {
+          "summary": "Collect bounded current-window evidence",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Collect bounded current-window evidence",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "evidence":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        {
+                                          "$ref": "#/components/schemas/Evidence",
+                                        },
+                                    },
+                                  "issues":
+                                    {
+                                      "type": "array",
+                                      "items": { "type": "string" },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "type": "object", "properties": {} } },
+                },
+            },
+        },
+    }
+  /api/v1/evidence/{id}:
+    {
+      "get":
+        {
+          "summary": "Read stored evidence until retention expiry",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Read stored evidence until retention expiry",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema": { "$ref": "#/components/schemas/Evidence" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+              "410": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/services/{id}/scans:
+    {
+      "post":
+        {
+          "summary": "Transactionally queue scan; return active scan if already queued",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "202":
+                {
+                  "description": "Transactionally queue scan; return active scan if already queued",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties": { "id": { "type": "string" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "type": "object", "properties": {} } },
+                },
+            },
+        },
+    }
+  /api/v1/scans:
+    {
+      "get":
+        {
+          "summary": "List scan snapshots and results",
+          "parameters":
+            [
+              {
+                "name": "cursor",
+                "in": "query",
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "List scan snapshots and results",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        { "$ref": "#/components/schemas/Run" },
+                                    },
+                                  "next_cursor": { "type": "string" },
+                                },
+                              "required": ["items", "next_cursor"],
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/scans/{id}:
+    {
+      "get":
+        {
+          "summary": "Read scan progress and result",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Read scan progress and result",
+                  "content":
+                    {
+                      "application/json":
+                        { "schema": { "$ref": "#/components/schemas/Run" } },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/findings:
+    {
+      "get":
+        {
+          "summary": "List findings by optional state",
+          "parameters":
+            [
+              {
+                "name": "cursor",
+                "in": "query",
+                "schema": { "type": "string" },
+              },
+              {
+                "name": "state",
+                "in": "query",
+                "schema":
+                  {
+                    "type": "string",
+                    "enum":
+                      [
+                        "",
+                        "new",
+                        "acknowledged",
+                        "snoozed",
+                        "resolved",
+                        "dismissed",
+                      ],
+                  },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "List findings by optional state",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        {
+                                          "$ref": "#/components/schemas/Finding",
+                                        },
+                                    },
+                                  "next_cursor": { "type": "string" },
+                                },
+                              "required": ["items", "next_cursor"],
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/findings/{id}/state:
+    {
+      "post":
+        {
+          "summary": "Apply audited, idempotent lifecycle transition",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Apply audited, idempotent lifecycle transition",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties": { "ok": { "type": "boolean" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "properties":
+                            {
+                              "state":
+                                {
+                                  "type": "string",
+                                  "enum":
+                                    [
+                                      "acknowledged",
+                                      "snoozed",
+                                      "resolved",
+                                      "dismissed",
+                                    ],
+                                },
+                              "snooze_hours":
+                                {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 168,
+                                },
+                            },
+                          "required": ["state"],
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/findings/{id}/feedback:
+    {
+      "post":
+        {
+          "summary": "Record usefulness feedback",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Record usefulness feedback",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties": { "ok": { "type": "boolean" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "properties":
+                            {
+                              "feedback":
+                                {
+                                  "type": "string",
+                                  "enum": ["useful", "not_useful"],
+                                },
+                            },
+                          "required": ["feedback"],
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/services/{id}/investigations:
+    {
+      "post":
+        {
+          "summary": "Queue investigation with persisted scope and bounds",
+          "description": "Equivalent active requests reuse a run. A different incident window, mapping revision, or settings returns 409 active_run_conflict.",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "202":
+                {
+                  "description": "Queue investigation with persisted scope and bounds",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties": { "id": { "type": "string" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "properties":
+                            {
+                              "start":
+                                { "type": "string", "format": "date-time" },
+                              "end":
+                                { "type": "string", "format": "date-time" },
+                              "finding_id": { "type": "string" },
+                              "minutes":
+                                {
+                                  "type": "integer",
+                                  "minimum": 5,
+                                  "maximum": 60,
+                                  "default": 30,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/investigations:
+    {
+      "get":
+        {
+          "summary": "List investigations",
+          "parameters":
+            [
+              {
+                "name": "cursor",
+                "in": "query",
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "List investigations",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        { "$ref": "#/components/schemas/Run" },
+                                    },
+                                  "next_cursor": { "type": "string" },
+                                },
+                              "required": ["items", "next_cursor"],
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/investigations/{id}:
+    {
+      "get":
+        {
+          "summary": "Read persistent investigation/report; poll every second while active",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Read persistent investigation/report; poll every second while active",
+                  "content":
+                    {
+                      "application/json":
+                        { "schema": { "$ref": "#/components/schemas/Run" } },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/investigations/{id}/cancel:
+    {
+      "post":
+        {
+          "summary": "Cancel investigation and notify the durable worker",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Cancel investigation and notify the durable worker",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties": { "ok": { "type": "boolean" } },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "type": "object", "properties": {} } },
+                },
+            },
+        },
+    }
+  /api/v1/investigations/{id}/events:
+    {
+      "get":
+        {
+          "summary": "Polling fallback for SSE; ordered persistent progress with cursor replay",
+          "parameters":
+            [
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+              {
+                "name": "after",
+                "in": "query",
+                "schema": { "type": "integer", "minimum": 0 },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Polling fallback for SSE; ordered persistent progress with cursor replay",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        {
+                                          "$ref": "#/components/schemas/Event",
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/settings:
+    {
+      "get":
+        {
+          "summary": "Read effective detector and collection settings",
+          "parameters": [],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Read effective detector and collection settings",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema": { "$ref": "#/components/schemas/Settings" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+      "post":
+        {
+          "summary": "Replace effective settings; query windows must total at most 120 minutes",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "Origin",
+                "in": "header",
+                "required": true,
+                "schema": { "type": "string" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Replace effective settings; query windows must total at most 120 minutes",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema": { "$ref": "#/components/schemas/Settings" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "$ref": "#/components/schemas/Settings" } },
+                },
+            },
+        },
+    }
+  /api/v1/overview:
+    {
+      "get":
+        {
+          "summary": "Read workspace counts and stale/missing scan indicator",
+          "parameters": [],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Read workspace counts and stale/missing scan indicator",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "services": { "type": "integer" },
+                                  "monitored": { "type": "integer" },
+                                  "active_findings": { "type": "integer" },
+                                  "connected": { "type": "integer" },
+                                  "sources": { "type": "integer" },
+                                  "last_successful_scan":
+                                    {
+                                      "type": ["string", "null"],
+                                      "format": "date-time",
+                                    },
+                                  "stale": { "type": "boolean" },
+                                },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/system:
+    {
+      "get":
+        {
+          "summary": "Read authenticated operational counters",
+          "parameters": [],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Read authenticated operational counters",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "properties":
+                                {
+                                  "database": { "type": "string" },
+                                  "queued": { "type": "integer" },
+                                  "running": { "type": "integer" },
+                                  "failed": { "type": "integer" },
+                                  "worker_limit": { "type": "integer" },
+                                  "per_connection_limit": { "type": "integer" },
+                                  "request_limit": { "type": "integer" },
+                                  "deadline_seconds": { "type": "integer" },
+                                  "version": { "type": "string" },
+                                },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/Error" },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+              "429": { "$ref": "#/components/responses/Error" },
+              "500": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/notifications/destinations:
+    get:
+      responses:
+        "200":
+          description: Write-only destination secrets are never returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    {
+                      type: array,
+                      items:
+                        {
+                          $ref: "#/components/schemas/NotificationDestination",
+                        },
+                    }
+                  app_url: { type: string }
+                  local_links: { type: boolean }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/NotificationDestinationInput" }
+      responses:
+        "200":
+          {
+            description: Created destination; maximum 20 active destinations,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/NotificationDestination" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/notifications/destinations/{id}:
+    parameters:
+      - {
+          in: path,
+          name: id,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    post:
+      description: Update with current revision. Blank URL/signing_key preserve stored secrets. Kind is immutable. Cancels pending, retrying and failed deliveries; old events are not backfilled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/NotificationDestinationInput" }
+      responses:
+        "200":
+          {
+            description: Updated destination,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/NotificationDestination" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/notifications/destinations/{id}/delete:
+    parameters:
+      - {
+          in: path,
+          name: id,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    post:
+      responses:
+        "200":
+          {
+            description: Disabled destination,
+            erased secret,
+            and cancelled queued deliveries; already dispatched requests cannot be recalled,
+          }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/notifications/destinations/{id}/preview:
+    parameters:
+      - {
+          in: path,
+          name: id,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    post:
+      responses:
+        "200":
+          {
+            description: Synthetic platform-specific payload and sends_message=false; no network dispatch,
+          }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/notifications/destinations/{id}/test:
+    parameters:
+      - {
+          in: path,
+          name: id,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    post:
+      description: Send a labeled synthetic test to an enabled destination; bypasses quiet hours and origin filters, but preserves transport limits. Maximum three tests per destination per minute.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                type: object,
+                additionalProperties: false,
+                required: [confirm],
+                properties: { confirm: { const: true } },
+              }
+      responses:
+        "202":
+          { description: Queued; returns delivery id, not an acknowledgement }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /api/v1/notifications/deliveries:
+    get:
+      parameters:
+        - {
+            in: query,
+            name: cursor,
+            schema: { type: string },
+            description: Last delivery ID from prior page; newest-created-first keyset pagination,
+          }
+      responses:
+        "200":
+          description: At most 50 delivery records; no payloads or destination secrets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    {
+                      type: array,
+                      items:
+                        { $ref: "#/components/schemas/NotificationDelivery" },
+                    }
+                  next_cursor: { type: string }
+  /api/v1/notifications/deliveries/{id}/retry:
+    parameters:
+      - {
+          in: path,
+          name: id,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    post:
+      description: Retry only failed, unexpired deliveries with attempts remaining and the unchanged enabled destination. Does not reset the original eight-attempt/24-hour/content-expiry limits. May duplicate an accepted message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                type: object,
+                additionalProperties: false,
+                required: [confirm],
+                properties: { confirm: { const: true } },
+              }
+      responses:
+        "202": { description: Queued; returns original delivery id }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/ai/settings:
+    {
+      "get":
+        {
+          "summary": "AI consent, write-only provider settings and workspace usage",
+          "parameters": [],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "AI consent, write-only provider settings and workspace usage",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AISettings" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/ai/policy:
+    {
+      "post":
+        {
+          "summary": "Save revision-checked AI policy; cancel pending work; disabling purges generated content",
+          "parameters": [{ "$ref": "#/components/parameters/CSRF" }],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Save revision-checked AI policy; cancel pending work; disabling purges generated content",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema": { "$ref": "#/components/schemas/AIPolicy" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "$ref": "#/components/schemas/AIPolicy" } },
+                },
+            },
+        },
+    }
+  /api/v1/ai/providers:
+    {
+      "post":
+        {
+          "summary": "Add one configuration per provider kind",
+          "parameters": [{ "$ref": "#/components/parameters/CSRF" }],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Add one configuration per provider kind",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AIProvider" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/AIProviderInput" },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/ai/providers/{id}:
+    {
+      "post":
+        {
+          "summary": "Edit provider; increment revision, clear capability and generated content, cancel active work",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Edit provider; increment revision, clear capability and generated content, cancel active work",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AIProvider" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/AIProviderInput" },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/ai/providers/{id}/delete:
+    {
+      "post":
+        {
+          "summary": "Erase encrypted provider key and generated content; cancel active work",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Erase encrypted provider key and generated content; cancel active work",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": { "ok": { "type": "boolean" } },
+                              "required": ["ok"],
+                            },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {},
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/ai/providers/{id}/test:
+    {
+      "post":
+        {
+          "summary": "Reserve and queue one explicitly confirmed synthetic capability test",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "202":
+                {
+                  "description": "Reserve and queue one explicitly confirmed synthetic capability test",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AIAdmission" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "$ref": "#/components/schemas/AIStart" } },
+                },
+            },
+        },
+    }
+  /api/v1/investigations/{id}/ai/preview:
+    {
+      "post":
+        {
+          "summary": "Preview exact evidence request without sending it",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Preview exact evidence request without sending it",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AIPreview" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "$ref": "#/components/schemas/AIStart" } },
+                },
+            },
+        },
+    }
+  /api/v1/investigations/{id}/ai:
+    {
+      "post":
+        {
+          "summary": "Reserve and queue one confirmed evidence analysis or reuse a validated result",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "202":
+                {
+                  "description": "Requires capability ready, enabled workspace/provider, explicit service/demo consent and a current preview digest. Budget, active-run and unavailable evidence conflicts are 409.",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AIAdmission" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "$ref": "#/components/schemas/AIStart" } },
+                },
+            },
+        },
+    }
+  /api/v1/ai/runs:
+    {
+      "get":
+        {
+          "summary": "AI invocations in pages of 50, newest first; expired content omitted",
+          "parameters":
+            [
+              {
+                "name": "cursor",
+                "in": "query",
+                "description": "Previous next_cursor; omit or leave empty for the first page. Retain the same investigation filter.",
+                "schema": { "type": "string" },
+              },
+              {
+                "name": "investigation_id",
+                "in": "query",
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "AI invocations in pages of 50, newest first; expired content omitted",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": ["items", "next_cursor"],
+                              "properties":
+                                {
+                                  "next_cursor": { "type": "string" },
+                                  "items":
+                                    {
+                                      "type": "array",
+                                      "items":
+                                        {
+                                          "$ref": "#/components/schemas/AIRun",
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+            },
+        },
+    }
+  /api/v1/ai/runs/{id}/cancel:
+    {
+      "post":
+        {
+          "summary": "Cancel queued or active AI processing; uncertain charges remain reserved",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Cancel queued or active AI processing; uncertain charges remain reserved",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": { "ok": { "type": "boolean" } },
+                              "required": ["ok"],
+                            },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {},
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/ai/runs/{id}/delete:
+    {
+      "post":
+        {
+          "summary": "Delete local AI content and cancel outstanding processing; keep usage metadata",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Delete local AI content and cancel outstanding processing; keep usage metadata",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": { "ok": { "type": "boolean" } },
+                              "required": ["ok"],
+                            },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {},
+                        },
+                    },
+                },
+            },
+        },
+    }
+  /api/v1/ai/runs/{id}/reconcile:
+    {
+      "post":
+        {
+          "summary": "Record verified charge for a terminal unknown invocation older than four minutes",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Record verified charge for a terminal unknown invocation older than four minutes",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": { "ok": { "type": "boolean" } },
+                              "required": ["ok"],
+                            },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties":
+                            {
+                              "confirm": { "const": true },
+                              "cost":
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "description": "Integer micro-USD",
+                                  "maximum": 1000000000,
+                                },
+                            },
+                          "required": ["confirm", "cost"],
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+components:
+  securitySchemes:
+    session: { type: apiKey, in: cookie, name: sherlock_session }
+  parameters:
+    CSRF:
+      {
+        name: X-CSRF-Token,
+        in: header,
+        required: true,
+        schema: { type: string },
+      }
+  responses:
+    Error:
+      description: Sanitized error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message, request_id]
+            properties:
+              code: { type: string }
+              message: { type: string }
+              request_id: { type: string }
+  schemas:
+    ConnectionInput:
+      {
+        "type": "object",
+        "properties":
+          {
+            "name": { "type": "string" },
+            "base_url": { "type": "string" },
+            "username": { "type": "string" },
+            "tenant": { "type": "string" },
+            "ca_pem": { "type": "string" },
+            "kind": { "type": "string", "enum": ["prometheus", "loki"] },
+            "auth_mode":
+              { "type": "string", "enum": ["none", "bearer", "basic"] },
+            "secret":
+              {
+                "type": "string",
+                "writeOnly": true,
+                "description": "Omit/empty on edit to preserve credentials of the same auth mode.",
+              },
+          },
+        "required": ["name", "kind", "base_url", "auth_mode"],
+      }
+    Connection:
+      {
+        "type": "object",
+        "properties":
+          {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "kind": { "type": "string" },
+            "base_url": { "type": "string" },
+            "auth_mode": { "type": "string" },
+            "tenant": { "type": "string" },
+            "ca_pem": { "type": "string" },
+            "origin": { "type": "string" },
+            "status": { "type": "string" },
+            "last_error": { "type": "string" },
+            "enabled": { "type": "boolean" },
+            "revision": { "type": "integer" },
+            "last_test_at":
+              { "type": ["string", "null"], "format": "date-time" },
+            "last_success_at":
+              { "type": ["string", "null"], "format": "date-time" },
+            "capabilities": { "type": "array", "items": { "type": "string" } },
+          },
+      }
+    Mapping:
+      {
+        "type": "object",
+        "properties":
+          {
+            "prometheus_labels":
+              {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Exact metrics selector. Required when Prometheus is configured unless legacy labels are supplied.",
+              },
+            "loki_labels":
+              {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Exact logs selector. Required when Loki is configured unless legacy labels are supplied.",
+              },
+            "labels":
+              {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+              },
+            "metric": { "type": "string" },
+            "error_labels":
+              {
+                "type": ["object", "null"],
+                "additionalProperties": { "type": "string" },
+              },
+            "error_pattern": { "type": "string" },
+            "warning_pattern": { "type": "string" },
+            "store_excerpts": { "type": "boolean" },
+            "sensitive_patterns":
+              { "type": "array", "items": { "type": "string" } },
+          },
+        "required":
+          [
+            "metric",
+            "error_labels",
+            "error_pattern",
+            "warning_pattern",
+            "store_excerpts",
+          ],
+      }
+    ServiceInput:
+      {
+        "type": "object",
+        "properties":
+          {
+            "name": { "type": "string" },
+            "environment": { "type": "string" },
+            "prometheus_id": { "type": "string" },
+            "loki_id": { "type": "string" },
+            "mapping": { "$ref": "#/components/schemas/Mapping" },
+            "monitoring": { "type": "boolean" },
+          },
+        "required": ["name", "environment", "mapping"],
+      }
+    Service:
+      {
+        "type": "object",
+        "properties":
+          {
+            "name": { "type": "string" },
+            "environment": { "type": "string" },
+            "prometheus_id": { "type": "string" },
+            "loki_id": { "type": "string" },
+            "mapping": { "$ref": "#/components/schemas/Mapping" },
+            "monitoring": { "type": "boolean" },
+            "id": { "type": "string" },
+            "origin": { "type": "string", "enum": ["demo", "live"] },
+            "revision": { "type": "integer" },
+            "last_scan_id": { "type": "string" },
+            "last_scan_state": { "type": "string" },
+          },
+      }
+    Pattern:
+      {
+        "type": "object",
+        "properties":
+          {
+            "fingerprint": { "type": "string" },
+            "count": { "type": "integer" },
+            "sample": { "type": "string" },
+            "first": { "type": "string", "format": "date-time" },
+            "last": { "type": "string", "format": "date-time" },
+          },
+      }
+    Observation:
+      {
+        "type": "object",
+        "properties":
+          {
+            "kind": { "type": "string" },
+            "query": { "type": "string" },
+            "start": { "type": "string", "format": "date-time" },
+            "end": { "type": "string", "format": "date-time" },
+            "complete": { "type": "boolean" },
+            "sample_count": { "type": "integer" },
+            "coverage_fraction": { "type": "number" },
+            "value": { "type": "number" },
+            "unit": { "type": "string" },
+            "errors":
+              {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Pattern" },
+              },
+            "warnings":
+              {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Pattern" },
+              },
+            "notes": { "type": "string" },
+            "redaction_version": { "type": "string" },
+          },
+      }
+    Evidence:
+      {
+        "type": "object",
+        "properties":
+          {
+            "id": { "type": "string" },
+            "service_id": { "type": "string" },
+            "connection_id": { "type": "string" },
+            "origin": { "type": "string" },
+            "source_available": { "type": "boolean" },
+            "mapping_revision": { "type": "integer" },
+            "collected_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" },
+            "observation": { "$ref": "#/components/schemas/Observation" },
+          },
+      }
+    Settings:
+      {
+        "type": "object",
+        "properties":
+          {
+            "cadence_minutes":
+              { "type": "number", "minimum": 5, "maximum": 60 },
+            "current_minutes":
+              { "type": "number", "minimum": 5, "maximum": 60 },
+            "baseline_minutes":
+              { "type": "number", "minimum": 15, "maximum": 115 },
+            "retention_days": { "type": "number", "minimum": 1, "maximum": 30 },
+            "cooldown_hours":
+              { "type": "number", "minimum": 1, "maximum": 168 },
+            "min_occurrences":
+              { "type": "number", "minimum": 2, "maximum": 1000 },
+            "min_warnings": { "type": "number", "minimum": 3, "maximum": 1000 },
+            "warning_multiplier":
+              { "type": "number", "minimum": 2, "maximum": 100 },
+            "min_traffic":
+              { "type": "number", "minimum": 20, "maximum": 1000000000.0 },
+            "error_delta": { "type": "number", "minimum": 0.001, "maximum": 1 },
+            "error_multiplier":
+              { "type": "number", "minimum": 1.1, "maximum": 100 },
+            "disabled":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "string",
+                    "enum": ["new_exception", "warning_burst", "error_rate"],
+                  },
+              },
+          },
+        "required":
+          [
+            "cadence_minutes",
+            "current_minutes",
+            "baseline_minutes",
+            "retention_days",
+            "cooldown_hours",
+            "min_occurrences",
+            "min_warnings",
+            "warning_multiplier",
+            "min_traffic",
+            "error_delta",
+            "error_multiplier",
+            "disabled",
+          ],
+      }
+    Candidate:
+      {
+        "type": "object",
+        "properties":
+          {
+            "detector": { "type": "string" },
+            "signal": { "type": "string" },
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "severity": { "type": "string" },
+            "evidence_ids": { "type": "array", "items": { "type": "string" } },
+            "current": { "type": "number" },
+            "baseline": { "type": "number" },
+            "thresholds": { "$ref": "#/components/schemas/Settings" },
+          },
+      }
+    Coverage:
+      {
+        "type": "object",
+        "properties":
+          {
+            "detector": { "type": "string" },
+            "status": { "type": "string" },
+            "reason": { "type": "string" },
+          },
+      }
+    Report:
+      {
+        "type": "object",
+        "properties":
+          {
+            "summary": { "type": "string" },
+            "observations":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "object",
+                    "properties":
+                      {
+                        "text": { "type": "string" },
+                        "evidence_ids":
+                          { "type": "array", "items": { "type": "string" } },
+                        "at": { "type": "string", "format": "date-time" },
+                        "window":
+                          {
+                            "type": "string",
+                            "enum": ["incident", "comparison"],
+                          },
+                      },
+                  },
+              },
+            "unknowns": { "type": "array", "items": { "type": "string" } },
+            "checks": { "type": "array", "items": { "type": "string" } },
+            "adequate": { "type": "boolean" },
+          },
+      }
+    RunResult:
+      {
+        "type": "object",
+        "properties":
+          {
+            "analysis":
+              {
+                "type": "object",
+                "properties":
+                  {
+                    "candidates":
+                      {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/Candidate" },
+                      },
+                    "coverage":
+                      {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/Coverage" },
+                      },
+                  },
+              },
+            "evidence_ids": { "type": "array", "items": { "type": "string" } },
+            "issues": { "type": "array", "items": { "type": "string" } },
+            "report": { "$ref": "#/components/schemas/Report" },
+          },
+      }
+    Run:
+      {
+        "type": "object",
+        "properties":
+          {
+            "id": { "type": "string" },
+            "service_id": { "type": "string" },
+            "kind": { "type": "string" },
+            "state": { "type": "string" },
+            "snapshot": { "$ref": "#/components/schemas/Service" },
+            "start": { "type": "string", "format": "date-time" },
+            "end": { "type": "string", "format": "date-time" },
+            "created_at": { "type": "string", "format": "date-time" },
+            "finished_at":
+              { "type": ["string", "null"], "format": "date-time" },
+            "requests": { "type": "integer" },
+            "result": { "$ref": "#/components/schemas/RunResult" },
+          },
+      }
+    Finding:
+      {
+        "type": "object",
+        "properties":
+          {
+            "id": { "type": "string" },
+            "service_id": { "type": "string" },
+            "origin": { "type": "string" },
+            "state": { "type": "string" },
+            "severity": { "type": "string" },
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "feedback": { "type": "string" },
+            "details": { "$ref": "#/components/schemas/Candidate" },
+            "first_seen": { "type": "string", "format": "date-time" },
+            "last_seen": { "type": "string", "format": "date-time" },
+            "snoozed_until":
+              { "type": ["string", "null"], "format": "date-time" },
+          },
+      }
+    Event:
+      {
+        "type": "object",
+        "properties":
+          {
+            "id": { "type": "integer" },
+            "stage": { "type": "string" },
+            "message": { "type": "string" },
+            "at": { "type": "string", "format": "date-time" },
+          },
+      }
+
+    NotificationRules:
+      type: object
+      additionalProperties: false
+      required: [events, origins, severities, timezone]
+      properties:
+        events:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 4,
+            items:
+              {
+                type: string,
+                enum:
+                  [
+                    finding.created,
+                    finding.escalated,
+                    finding.resolved,
+                    investigation.completed,
+                  ],
+              },
+          }
+        services:
+          {
+            type: array,
+            maxItems: 100,
+            items: { type: string, format: uuid },
+            description: Empty means all workspace services,
+          }
+        origins:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 2,
+            items: { type: string, enum: [live, demo] },
+          }
+        severities:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 2,
+            items: { type: string, enum: [notice, warning] },
+          }
+        immediate:
+          {
+            type: boolean,
+            default: false,
+            description: Bypass 60-second grouping; quiet hours still apply,
+          }
+        quiet_start:
+          {
+            type: string,
+            description: HH:MM local time or empty; both times required and must differ,
+          }
+        quiet_end: { type: string }
+        timezone:
+          { type: string, description: IANA timezone such as Europe/Stockholm }
+    NotificationDestinationInput:
+      type: object
+      additionalProperties: false
+      required: [name, kind, rules]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        kind: { type: string, enum: [slack, discord, webhook] }
+        enabled: { type: boolean, default: false }
+        revision:
+          {
+            type: integer,
+            description: Required on update; use the revision returned by GET,
+          }
+        rules: { $ref: "#/components/schemas/NotificationRules" }
+        url:
+          {
+            type: string,
+            writeOnly: true,
+            maxLength: 2048,
+            description: Required on create; HTTPS official Slack/Discord URL or generic receiver; explicit deployment exceptions permit generic HTTP,
+          }
+        signing_key:
+          {
+            type: string,
+            writeOnly: true,
+            maxLength: 256,
+            description: Generic webhooks require 32–256 UTF-8 bytes; blank on edit preserves the stored secret,
+          }
+    NotificationDestination:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [slack, discord, webhook] }
+        enabled: { type: boolean }
+        revision: { type: integer }
+        rules: { $ref: "#/components/schemas/NotificationRules" }
+        secret_set: { type: boolean }
+    NotificationDelivery:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        destination_id: { type: string, format: uuid }
+        destination_name: { type: string }
+        state:
+          {
+            type: string,
+            enum: [pending, sending, retrying, sent, failed, cancelled],
+          }
+        test: { type: boolean }
+        attempts: { type: integer, minimum: 0, maximum: 8 }
+        event_count: { type: integer }
+        last_error:
+          {
+            type: string,
+            description: Sanitized outcome; never includes receiver response or secret URL,
+          }
+        message_id:
+          {
+            type: string,
+            description: Discord acknowledged message ID when available,
+          }
+        created_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              number: { type: integer }
+              started_at: { type: string, format: date-time }
+              finished_at: { type: [string, "null"], format: date-time }
+              outcome:
+                {
+                  type: string,
+                  enum: [unknown, acknowledged, rejected, retryable, cancelled],
+                }
+              status_code:
+                {
+                  type: integer,
+                  description: Zero when no HTTP response was received,
+                }
+              detail: { type: string }
+
+    AIPolicy:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "enabled": { "type": "boolean" },
+            "daily_limit":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Integer micro-USD",
+                "maximum": 1000000000,
+              },
+            "run_limit":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Micro-USD; must not exceed daily_limit. Both limits positive when enabled.",
+              },
+            "revision":
+              {
+                "type": "integer",
+                "description": "Use current revision from settings; 0 before first save.",
+              },
+          },
+        "required": ["enabled", "daily_limit", "run_limit", "revision"],
+      }
+    AIProvider:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "id": { "type": "string", "format": "uuid", "readOnly": true },
+            "kind": { "type": "string", "enum": ["openai", "anthropic"] },
+            "model":
+              {
+                "type": "string",
+                "maxLength": 120,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$",
+              },
+            "revision": { "type": "integer" },
+            "enabled": { "type": "boolean" },
+            "services":
+              {
+                "type": "array",
+                "items": { "type": "string", "format": "uuid" },
+                "maxItems": 100,
+                "description": "Explicit allowlist. Empty means none.",
+              },
+            "allow_demo": { "type": "boolean" },
+            "allow_excerpts": { "type": "boolean" },
+            "input_price":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Micro-USD per million input tokens; positive when enabled.",
+                "maximum": 10000000000,
+              },
+            "output_price":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Micro-USD per million output tokens; positive when enabled.",
+                "maximum": 10000000000,
+              },
+            "price_date":
+              {
+                "type": "string",
+                "format": "date",
+                "description": "Not later than today.",
+              },
+            "capability":
+              {
+                "type": "string",
+                "readOnly": true,
+                "enum": ["untested", "ready", "failed"],
+              },
+            "secret_set": { "type": "boolean", "readOnly": true },
+          },
+        "required": ["kind", "model", "price_date"],
+      }
+    AIProviderInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "provider": { "$ref": "#/components/schemas/AIProvider" },
+            "api_key":
+              {
+                "type": "string",
+                "writeOnly": true,
+                "maxLength": 1024,
+                "description": "Required on create; blank on update keeps encrypted key. No CR/LF.",
+              },
+          },
+        "required": ["provider"],
+      }
+    AISettings:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "policy": { "$ref": "#/components/schemas/AIPolicy" },
+            "providers":
+              {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/AIProvider" },
+              },
+            "spent_today":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Integer micro-USD",
+              },
+            "reserved":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Integer micro-USD",
+              },
+            "input_limit": { "type": "integer" },
+            "output_limit": { "type": "integer" },
+            "prompt_version": { "type": "string" },
+            "fixture": { "type": "boolean" },
+          },
+      }
+    AIStart:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "provider_id": { "type": "string", "format": "uuid" },
+            "confirm":
+              {
+                "type": "boolean",
+                "description": "Must be true for a paid request; not needed for preview.",
+              },
+            "preview_digest":
+              {
+                "type": "string",
+                "description": "Required for analysis; must match current preview.",
+              },
+            "fresh":
+              {
+                "type": "boolean",
+                "default": false,
+                "description": "Bypass a completed saved success; active equivalents still reuse.",
+              },
+          },
+      }
+    AIAdmission:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "id": { "type": "string", "format": "uuid" },
+            "reused": { "type": "boolean" },
+          },
+        "required": ["id", "reused"],
+      }
+    AIPreview:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "payload":
+              {
+                "type": "object",
+                "description": "Exact provider wire JSON body, without authorization headers.",
+              },
+            "preview_digest": { "type": "string" },
+            "provider_id": { "type": "string", "format": "uuid" },
+            "model": { "type": "string" },
+            "input_bound": { "type": "integer" },
+            "output_limit": { "type": "integer" },
+            "reservation":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Integer micro-USD",
+              },
+            "expires_at": { "type": "string", "format": "date-time" },
+            "sends_data": { "const": false },
+          },
+      }
+    AIReport:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "summary":
+              {
+                "type": "string",
+                "maxLength": 2048,
+                "description": "Validated nonempty; redacted and truncated to 512 UTF-8 bytes before persistence.",
+              },
+            "observations":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties":
+                      {
+                        "text":
+                          {
+                            "type": "string",
+                            "maxLength": 2048,
+                            "description": "Validated nonempty; redacted and truncated to 512 UTF-8 bytes before persistence.",
+                          },
+                        "evidence_ids":
+                          {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "maxItems": 12,
+                            "minItems": 1,
+                          },
+                      },
+                    "required": ["text", "evidence_ids"],
+                  },
+                "minItems": 1,
+                "maxItems": 8,
+              },
+            "hypotheses":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties":
+                      {
+                        "text":
+                          {
+                            "type": "string",
+                            "maxLength": 2048,
+                            "description": "Validated nonempty; redacted and truncated to 512 UTF-8 bytes before persistence.",
+                          },
+                        "supporting_ids":
+                          {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "maxItems": 12,
+                            "minItems": 1,
+                          },
+                        "contradicting_ids":
+                          {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "maxItems": 12,
+                          },
+                      },
+                    "required": ["text", "supporting_ids", "contradicting_ids"],
+                  },
+                "maxItems": 4,
+              },
+            "unknowns":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "description": "Validated nonempty; redacted and truncated to 512 UTF-8 bytes before persistence.",
+                  },
+                "minItems": 1,
+                "maxItems": 8,
+              },
+            "checks":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "description": "Validated nonempty; redacted and truncated to 512 UTF-8 bytes before persistence.",
+                  },
+                "maxItems": 8,
+              },
+          },
+        "required":
+          ["summary", "observations", "hypotheses", "unknowns", "checks"],
+      }
+    AIRun:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties":
+          {
+            "id": { "type": "string", "format": "uuid" },
+            "provider_id": { "type": "string", "format": "uuid" },
+            "investigation_id": { "type": "string" },
+            "service_id": { "type": "string" },
+            "purpose": { "enum": ["test", "analysis"] },
+            "model": { "type": "string" },
+            "origin": { "enum": ["live", "demo"] },
+            "state":
+              {
+                "enum":
+                  [
+                    "queued",
+                    "analyzing",
+                    "completed",
+                    "fallback",
+                    "failed",
+                    "refused",
+                    "truncated",
+                    "cancelled",
+                    "unknown",
+                  ],
+              },
+            "reason": { "type": "string" },
+            "reserved":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Integer micro-USD",
+              },
+            "charged":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Integer micro-USD",
+              },
+            "accounting":
+              { "enum": ["reserved", "unknown", "settled", "reconciled"] },
+            "input_bound": { "type": "integer" },
+            "output_limit": { "type": "integer" },
+            "input_tokens": { "type": ["integer", "null"] },
+            "output_tokens": { "type": ["integer", "null"] },
+            "request_id": { "type": "string" },
+            "created_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" },
+            "started_at": { "type": ["string", "null"], "format": "date-time" },
+            "finished_at":
+              { "type": ["string", "null"], "format": "date-time" },
+            "report":
+              {
+                "anyOf":
+                  [
+                    { "$ref": "#/components/schemas/AIReport" },
+                    { "type": "null" },
+                  ],
+              },
+          },
+      }

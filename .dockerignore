@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+.local
+bin
+web/node_modules
+web/dist
+web/test-results
+docs/design
+INFRA_SHERLOCK_CODEX_KIT/reference

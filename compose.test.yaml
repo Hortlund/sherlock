@@ -1,0 +1,17 @@
+name: sherlock-test
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: sherlock_test
+      POSTGRES_USER: sherlock_test
+      POSTGRES_PASSWORD: local-test-only
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U sherlock_test -d sherlock_test]
+      interval: 1s
+      timeout: 3s
+      retries: 30

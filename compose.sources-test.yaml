@@ -1,0 +1,29 @@
+name: sherlock-sources-test
+services:
+  seed:
+    image: prom/prometheus:v3.2.1
+    user: '0'
+    entrypoint: [/bin/promtool]
+    command: [tsdb, create-blocks-from, openmetrics, /fixtures/metrics.txt, /prometheus]
+    volumes:
+      - ./.local/real-sources:/fixtures:ro
+      - metrics:/prometheus
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --query.max-samples=500000, --query.timeout=10s]
+    ports: ['127.0.0.1:19090:9090']
+    volumes:
+      - ./tests/contract/real/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - metrics:/prometheus
+    depends_on:
+      seed: {condition: service_completed_successfully}
+  loki:
+    image: grafana/loki:3.4.2
+    user: '0'
+    command: [-config.file=/etc/loki/test.yml]
+    ports: ['127.0.0.1:13100:3100']
+    volumes:
+      - ./tests/contract/real/loki.yml:/etc/loki/test.yml:ro
+    tmpfs: [/loki]
+volumes:
+  metrics:
