@@ -54,7 +54,8 @@ func (s *Server) initJobs(ctx context.Context) error {
 	river.AddWorker(workers, &runWorker{server: s})
 	river.AddWorker(workers, &notificationWorker{server: s})
 	river.AddWorker(workers, &aiWorker{server: s})
-	s.jobs, e = river.NewClient(driver, &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"default": {MaxWorkers: 4}, "notifications": {MaxWorkers: 2}, "ai": {MaxWorkers: 2}}, JobTimeout: 100 * time.Second, RescueStuckJobsAfter: 4 * time.Minute, SoftStopTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(discardWriter{}, nil))})
+	river.AddWorker(workers, &automationWorker{server: s})
+	s.jobs, e = river.NewClient(driver, &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"default": {MaxWorkers: 4}, "notifications": {MaxWorkers: 2}, "ai": {MaxWorkers: 2}, "automation": {MaxWorkers: 1}}, JobTimeout: 100 * time.Second, RescueStuckJobsAfter: 4 * time.Minute, SoftStopTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(discardWriter{}, nil))})
 	return e
 }
 
@@ -65,9 +66,12 @@ func (discardWriter) Write(p []byte) (int, error)     { return len(p), nil }
 func (s *Server) StartJobs(ctx context.Context) error { return s.jobs.Start(ctx) }
 func (s *Server) StopJobs(ctx context.Context) error  { return s.jobs.StopAndCancel(ctx) }
 func (s *Server) settings(ctx context.Context, ws string) (detectors.Config, error) {
+	return loadDetectorSettings(ctx, s.pool, ws)
+}
+func loadDetectorSettings(ctx context.Context, q aiDB, ws string) (detectors.Config, error) {
 	c := detectors.Defaults()
 	var b []byte
-	e := s.pool.QueryRow(ctx, `SELECT settings FROM workspace_settings WHERE workspace_id=$1`, ws).Scan(&b)
+	e := q.QueryRow(ctx, `SELECT settings FROM workspace_settings WHERE workspace_id=$1`, ws).Scan(&b)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return c, nil
 	}
@@ -298,7 +302,7 @@ func (s *Server) execute(parent context.Context, a runArgs) error {
 		result.EvidenceIDs = append(result.EvidenceIDs, ev.ID)
 	}
 	if kind == "scan" {
-		if e = s.persistFindings(ctx, a, v, scheduled, end, c, result.Analysis.Candidates); e != nil {
+		if e = s.persistFindings(ctx, a, v, scheduled, end, c, result.Analysis.Candidates, result.Analysis.Coverage...); e != nil {
 			return e
 		}
 	}
@@ -361,7 +365,7 @@ func (s *Server) finish(ctx context.Context, a runArgs, state string, result Run
 	}
 	return tx.Commit(ctx)
 }
-func (s *Server) persistFindings(ctx context.Context, a runArgs, v Service, scheduled bool, end time.Time, c detectors.Config, candidates []detectors.Candidate) error {
+func (s *Server) persistFindings(ctx context.Context, a runArgs, v Service, scheduled bool, end time.Time, c detectors.Config, candidates []detectors.Candidate, coverage ...detectors.Coverage) error {
 	tx, e := s.pool.Begin(ctx)
 	if e != nil {
 		return e
@@ -378,6 +382,7 @@ func (s *Server) persistFindings(ctx context.Context, a runArgs, v Service, sche
 	}
 	for _, candidate := range candidates {
 		var id, state, oldSeverity string
+		isNew := false
 		var occurrence int
 		var last time.Time
 		var closed *time.Time
@@ -399,6 +404,7 @@ func (s *Server) persistFindings(ctx context.Context, a runArgs, v Service, sche
 				continue
 			}
 			e = tx.QueryRow(ctx, `INSERT INTO findings(workspace_id,service_id,mapping_revision,origin,detector,signal,occurrence,severity,title,description,details,first_seen,last_seen) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING id::text`, a.WorkspaceID, v.ID, v.Revision, v.Origin, candidate.Detector, candidate.Signal, occurrence+1, candidate.Severity, candidate.Title, candidate.Description, raw, end).Scan(&id)
+			isNew = e == nil
 			if e == nil {
 				e = s.notificationForFinding(ctx, tx, a.WorkspaceID, id, "finding.created", candidate.EvidenceIDs)
 			}
@@ -406,6 +412,12 @@ func (s *Server) persistFindings(ctx context.Context, a runArgs, v Service, sche
 		if e != nil {
 			return e
 		}
+		if e = s.automationObservation(ctx, tx, a.WorkspaceID, v, id, isNew, end, candidate); e != nil {
+			return e
+		}
+	}
+	if e = s.automationClearMissing(ctx, tx, a.WorkspaceID, v, end, candidates, coverage); e != nil {
+		return e
 	}
 	return tx.Commit(ctx)
 }

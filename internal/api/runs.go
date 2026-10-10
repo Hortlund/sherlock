@@ -48,6 +48,11 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	// Serialize detector changes with recommendation publication, including the first save.
+	if _, e = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,731903))`, workspace(r)); e != nil {
+		s.internal(w, r, e)
+		return
+	}
 	raw, _ := json.Marshal(c)
 	_, e = tx.Exec(r.Context(), `INSERT INTO workspace_settings(workspace_id,settings) VALUES($1,$2) ON CONFLICT(workspace_id) DO UPDATE SET settings=EXCLUDED.settings`, workspace(r), raw)
 	if e == nil {
@@ -176,7 +181,7 @@ type Finding struct {
 }
 
 func (s *Server) listFindings(w http.ResponseWriter, r *http.Request) {
-	rows, e := s.pool.Query(r.Context(), `SELECT id::text,service_id::text,origin,state,severity,title,description,details,first_seen,last_seen,snoozed_until,feedback FROM findings WHERE workspace_id=$1 AND id::text>$2 AND ($3='' OR state=$3) ORDER BY id::text LIMIT 100`, workspace(r), r.URL.Query().Get("cursor"), r.URL.Query().Get("state"))
+	rows, e := s.pool.Query(r.Context(), `SELECT id::text,service_id::text,origin,state,severity,title,description,details,first_seen,last_seen,snoozed_until,feedback FROM findings WHERE workspace_id=$1 AND id::text>$2 AND ($3='' OR state=$3) AND ($4='' OR id::text=$4) ORDER BY id::text LIMIT 100`, workspace(r), r.URL.Query().Get("cursor"), r.URL.Query().Get("state"), r.URL.Query().Get("id"))
 	if e != nil {
 		s.internal(w, r, e)
 		return

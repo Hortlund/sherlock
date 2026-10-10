@@ -1,4 +1,5 @@
 import { AISettings } from "./AI";
+import { AutomationSettings } from "./Automation";
 import { NotificationSettings } from "./NotificationSettings";
 import { useRef, useState } from "react";
 import type { FormEvent } from "react";
@@ -333,6 +334,7 @@ const settingsSections = [
   { id: "account", label: "Account" },
   { id: "monitoring", label: "Monitoring" },
   { id: "ai-settings", label: "AI providers" },
+  { id: "automation", label: "Automation" },
   { id: "notifications", label: "Notifications" },
   { id: "system", label: "System" },
 ];
@@ -385,6 +387,7 @@ export function SettingsPage() {
         ) : null}
         {selected === "monitoring" ? <OperationalSettings /> : null}
         {selected === "ai-settings" ? <AISettings /> : null}
+        {selected === "automation" ? <AutomationSettings /> : null}
         {selected === "notifications" ? <NotificationSettings /> : null}
         {selected === "system" ? <SystemSettings /> : null}
       </div>

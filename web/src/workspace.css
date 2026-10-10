@@ -1395,3 +1395,52 @@
     border-radius: 5px;
   }
 }
+
+.automation-history {
+  margin-top: 40px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border);
+}
+.automation-filter {
+  max-width: 380px;
+}
+.automation-service-list {
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.automation-entry {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.automation-entry summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.automation-entry summary time {
+  color: var(--muted);
+  font-size: 12px;
+}
+.automation-entry[open] summary {
+  margin-bottom: 16px;
+}
+.automation-findings {
+  padding-left: 22px;
+}
+.automation-findings li {
+  padding: 12px 0;
+}
+.workspace-layout .automation-findings p {
+  margin: 6px 0;
+}
+.status-recommended {
+  color: #096a51;
+  background: #e5f4eb;
+}
+.status-pending {
+  color: #936019;
+  background: #fff3dc;
+}

@@ -1,7 +1,7 @@
 # Infra Sherlock — Product Specification
 
 **Version:** 1.2 (AI and notification planning revision, 2026-10-10)  
-**Status:** Deterministic MVP delivered; Phase 2 outbound notifications and reactive OpenAI/Anthropic analysis (Slices A/B) implemented and locally verified. Proactive triage, tools/follow-up and inbound triggers remain planned. See project `docs/progress.md` for actual verification.  
+**Status:** Deterministic MVP delivered; Phase 2 outbound notifications and reactive OpenAI/Anthropic analysis (Slices A/B) implemented and locally verified. Slice C now includes local proactive recommendations and history. Model triage, automatic investigations, tools/follow-up and inbound triggers remain planned. See project `docs/progress.md` for actual verification.
 **Stack:** Go backend, React/TypeScript frontend, PostgreSQL  
 **Product:** Self-hosted reliability investigations backed by observable evidence
 
@@ -367,6 +367,16 @@ Sanitize generated text before persistence, display, cache storage, or notificat
 
 ## 16. Decision policy, reactive investigations, and proactive operation
 
+### Delivered recommendation-first increment (2026-10-11)
+
+The first Slice C increment implements local rules only, with **Off** (default) and **Recommendations only** (`triage_only`) modes. Select services explicitly; demo findings require a separate opt-in. New occurrences, severity changes and qualifying growth commit durable evaluation work with findings. A separate single-worker River queue groups changes for 60 seconds, rechecks policy/mapping/monitoring, lifecycle and retained complete evidence, then records a recommendation or skip reason. No model call, automatic investigation or new notification event originates from this pipeline.
+
+Recommendation cooldown defaults to 30 minutes (5–1440 allowed); relative growth defaults to 2× (1.5–10 allowed) and must also meet the detector's absolute minimum. Log counts are normalized per sampled minute. Window/threshold changes reset comparison. Settings revisions invalidate queued old-policy work and seed existing findings on their next observation; enabling does not replay a backlog. Skipped evaluations advance the baseline, so cooldown expiry alone does not requeue them. Jobs older than 15 minutes or with exhausted retries become skipped. Keep 30 days of activity, while retaining checkpoints/cooldowns for deduplication. Settings provides service-filtered cursor history and links to findings. [Automation operations](../docs/automation.md) documents the delivered behavior.
+
+The decision adapters and automatic behavior described below remain later Slice C work.
+
+Before publishing a recommendation, recheck current Monitoring detector enablement and comparison settings, serialized with settings saves. Both the batch and the actual observation must be at most 15 minutes old. A newer complete scan without the same qualifying signal invalidates its pending item without resolving the finding; missing/disabled coverage does not prove recovery. Older delayed observations cannot undo that recovery, and a newer qualifying observation can restore eligibility. Skips never start or extend recommendation cooldowns. Exact finding links ignore retained list filters and pagination, including browser history navigation.
+
 ### Decision policy
 
 The decision model may recommend `observe`, `investigate`, `needs_attention`, or `need_more_data`. The server validates the enum, scope, coverage, and any referenced evidence, then applies a deterministic policy. A model recommendation is never direct permission to call a tool, select a recipient, spend beyond budget, or mutate infrastructure.
@@ -482,4 +492,4 @@ Acceptance requires existing foundation tests plus: provider contract fixtures f
 
 Maintain a versioned evaluation set covering the demo, healthy noise, insufficient data, overlapping incidents, contradictory evidence, and malicious log instructions. Require all deterministic safety/contract assertions to pass and compare AI report claims with labeled facts. Record usefulness and cost measurements before choosing default model IDs. Fixture success is not live provider certification: each enabled provider and notification adapter needs a documented, bounded live smoke test using user-supplied credentials and an explicitly selected test destination before release. No credentials or external test messages are required for this planning task.
 
-Phase 2 Slices **A/B are implemented and locally verified with fixtures**; C–E remain planned. The [implementation plan](../docs/phase2-plan.md) defines ordered slices and acceptance gates. Existing no-AI demo behavior remains the baseline throughout implementation.
+Phase 2 Slices **A/B are implemented and locally verified with fixtures**; local recommendations/history from C are also delivered, with model triage/automatic runs and D–E still planned. The [implementation plan](../docs/phase2-plan.md) defines ordered slices and acceptance gates. Existing no-AI demo behavior remains the baseline throughout implementation.

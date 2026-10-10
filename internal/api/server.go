@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	s.investigationRoutes(mux)
 	s.notificationRoutes(mux)
 	s.aiRoutes(mux)
+	s.automationRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { s.fail(w, r, 404, "not_found", "Endpoint not found.") })
 	mux.HandleFunc("/", s.static)
 	return s.middleware(mux)

@@ -955,9 +955,15 @@ paths:
     {
       "get":
         {
-          "summary": "List findings by optional state",
+          "summary": "List findings by optional state or exact ID",
           "parameters":
             [
+              {
+                "name": "id",
+                "in": "query",
+                "description": "Optional exact finding ID, scoped to the workspace; supports direct links beyond the first page.",
+                "schema": { "type": "string" },
+              },
               {
                 "name": "cursor",
                 "in": "query",
@@ -985,7 +991,7 @@ paths:
             {
               "200":
                 {
-                  "description": "List findings by optional state",
+                  "description": "List findings by optional state or exact ID",
                   "content":
                     {
                       "application/json":
@@ -2381,6 +2387,65 @@ paths:
         },
     }
 
+  /api/v1/automation/policy:
+    get:
+      summary: Read local recommendation policy (default Off)
+      responses:
+        '200':
+          description: Current policy and optimistic revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationPolicy' }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Save local recommendation policy; invalidate queued older revisions
+      parameters:
+        - { $ref: '#/components/parameters/CSRF' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AutomationPolicy' }
+      responses:
+        '200':
+          description: Saved policy with incremented revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationPolicy' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/automation/activity:
+    get:
+      summary: List local recommendations and skips, newest first
+      description: Up to 50 entries per page, retained for 30 days. Missing or out-of-scope cursors return an empty page. No automatic investigation or model call is started by this pipeline.
+      parameters:
+        - name: service_id
+          in: query
+          schema: { type: string }
+        - name: cursor
+          in: query
+          description: Previous next_cursor; scoped to this workspace and optional service filter.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Activity page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AutomationActivity' }
+                  next_cursor: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     session: { type: apiKey, in: cookie, name: sherlock_session }
@@ -2405,6 +2470,62 @@ components:
               message: { type: string }
               request_id: { type: string }
   schemas:
+    AutomationPolicy:
+      type: object
+      required: [mode, services, allow_demo, cooldown_minutes, growth_multiplier, revision]
+      properties:
+        mode:
+          type: string
+          enum: ['off', triage_only]
+          description: triage_only currently means local rules and manual investigation recommendations; no AI triage or automatic runs.
+        services:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: Explicit workspace service selection; empty includes none.
+        allow_demo: { type: boolean, default: false }
+        cooldown_minutes: { type: integer, minimum: 5, maximum: 1440, default: 30 }
+        growth_multiplier: { type: number, minimum: 1.5, maximum: 10, default: 2 }
+        revision: { type: integer, minimum: 0, description: 'Current revision on write; stale saves return 409.' }
+    AutomationMeasurement:
+      type: object
+      required: [value, unit, comparison_key, severity, minimum_delta]
+      properties:
+        value: { type: number, minimum: 0 }
+        unit: { type: string, enum: [error_proportion, sampled_lines_per_minute] }
+        comparison_key: { type: string }
+        severity: { type: string }
+        minimum_delta: { type: number, minimum: 0 }
+    AutomationActivity:
+      type: object
+      required: [id, service_id, service_name, origin, state, reason, policy_revision, mapping_revision, created_at, due_at, evaluated_at, next_eligible_at, items]
+      properties:
+        id: { type: string, format: uuid }
+        service_id: { type: string, format: uuid }
+        service_name: { type: string }
+        origin: { type: string, enum: [live, demo] }
+        state: { type: string, enum: [pending, recommended, skipped] }
+        reason: { type: string }
+        policy_revision: { type: integer }
+        mapping_revision: { type: integer }
+        created_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        evaluated_at: { type: [string, 'null'], format: date-time }
+        next_eligible_at: { type: [string, 'null'], format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            required: [finding_id, title, trigger, recommendation, reason, measurement, observed_at]
+            properties:
+              finding_id: { type: string, format: uuid }
+              title: { type: string }
+              trigger: { type: string, enum: ['', new_occurrence, severity_changed, growth, comparison_changed] }
+              recommendation: { type: string, enum: [pending, investigate, observe, need_more_data] }
+              reason: { type: string }
+              measurement: { $ref: '#/components/schemas/AutomationMeasurement' }
+              observed_at: { type: string, format: date-time }
     ConnectionInput:
       {
         "type": "object",

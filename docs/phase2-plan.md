@@ -1,6 +1,6 @@
 # Phase 2 implementation plan
 
-Status: Slices A and B implemented and locally verified. Slices C–E remain planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
+Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; model triage/automatic runs and Slices D–E remain planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
 
 The delivered workspace now groups configuration into dedicated Settings sections and separates investigation Report, AI analysis and Run activity views. Editors use focused drawers; the existing A/B workflows remain covered by browser regressions. See [interface direction](design/README.md) and [progress](progress.md).
 
@@ -77,6 +77,12 @@ Delivered scope: one investigation model per provider; triage-role selection bel
 
 ## Slice C — Decision adapters and proactive triage
 
+Delivered first increment, per the user's recommendation-first choice: **Off / Recommendations only** settings, explicit service/demo selection, deterministic material-change rules, durable 60-second service grouping, recommendation cooldowns, and paginated activity with per-finding reasons. This increment never starts investigations or calls models. Defaults are Off, no selected services, demo excluded, 30-minute cooldown and 2× growth plus the detector's absolute minimum. Settings revisions reset comparison baselines without replaying a backlog. See [automation setup and rules](automation.md).
+
+Remaining work below includes decision adapters, model-result caching, AI admission and automatic execution; full Slice C is not complete.
+
+Review fixes in the local-rules increment: complete healthy scans invalidate pending signals, freshness is bounded by the actual observation as well as batch age, current Monitoring settings are rechecked at evaluation, and finding history links ignore retained list filters/cursors. Recovery skips preserve evidence and do not consume cooldowns. Forward migration 008 records recovery timestamps.
+
 Implement deterministic routing plus optional OpenAI Decisions and structured classification through OpenAI/Anthropic. Normalize only supported answer types; map refusal/incomplete/error to rules fallback. Record model recommendation separately from the server's applied action/reason.
 
 Add durable automation events from finding changes, the 60-second coalescing gate, material-change measurements, persisted cooldowns, strict content/version cache keys, and off/triage-only/auto-investigate modes. Auto-investigate invokes Slice B's bounded analysis initially; triage itself has no tools. Notification policy remains independent and cannot be overridden by a model's `observe` recommendation.
@@ -136,7 +142,8 @@ Slice B review fixes cover stale provider previews, access to older unresolved c
 
 - [x] A: outbound destinations, durable delivery, and secret lifecycle verified with local fixtures.
 - [x] B: both providers, reactive structured reports, privacy, and budgets verified with local fixtures.
-- [ ] C: Decisions/structured triage and proactive gates verified.
+- [x] C, first increment: local recommendations, durable rules/cooldowns and activity history.
+- [ ] C, remaining: Decisions/structured triage, evaluation scenarios and automatic investigation admission.
 - [ ] D: tool loop, restart safety, evaluations, and follow-up verified.
 - [ ] E: signed inbound trigger pipeline verified.
 - [x] Existing deterministic demo and all prior regression cases still pass.

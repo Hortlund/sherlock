@@ -6,7 +6,7 @@ Sherlock is a self-hosted investigation tool for developers and operators runnin
 
 Connect your existing telemetry, map a service, and investigate a finding. Add **OpenAI or Anthropic** for optional AI analysis, and send alerts to **Slack, Discord, or a webhook receiver**.
 
-**Status:** Working MVP with outbound notifications and manually requested AI analysis. Proactive AI, multi-step investigations, and inbound alert triggers are on the roadmap. The current installation supports one administrator and one workspace.
+**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations. Automatic AI runs, multi-step investigations, and inbound alert triggers are on the roadmap. The current installation supports one administrator and one workspace.
 
 ## From signals to next steps
 
@@ -83,7 +83,8 @@ The next steps build on the same evidence, privacy, and budget controls. These a
 | Evidence-first foundation | Implemented | Prometheus/Loki connections, service mapping, scheduled scans, three detectors, finding lifecycle, and rule-based investigation reports. |
 | Outbound notifications | Implemented · Phase 2 A | Slack, Discord, signed webhooks, routing filters, quiet hours, retries, and delivery history. |
 | Reactive AI analysis | Implemented · Phase 2 B | OpenAI/Anthropic setup, payload previews, manual analysis, evidence references, usage tracking, cancellation, and budgets. |
-| Proactive triage and decision policies | Next · Phase 2 C | Evaluate meaningful changes, recommend whether to investigate, and optionally start analysis within configured rules. Coalescing and cooldowns limit repeated work. Required factual alerts remain independent of AI decisions. |
+| Proactive rules and activity | Implemented · First part of Phase 2 C | Local investigation recommendations, selected services, 60-second grouping, persistent cooldowns and an activity history that explains recommendations and skips. |
+| Decision models and automatic investigation | Next · Remaining Phase 2 C | Optional AI triage and explicitly enabled automatic analysis within privacy, budget and concurrency limits. |
 | Investigation tools and follow-up | Planned · Phase 2 D | Let AI request approved, bounded, read-only telemetry lookups across multiple steps, then support follow-up questions with cumulative cost and time limits. |
 | Inbound alert triggers | Planned · Phase 2 E | Accept signed alerts from external systems, prevent replay/duplicates, and start investigations within administrator-configured service boundaries. |
 
@@ -130,6 +131,7 @@ For local Go development, export `DATABASE_URL`, `SHERLOCK_ENCRYPTION_KEY`, `SHE
 - [Roadmap and acceptance criteria](docs/phase2-plan.md) — implementation order and planned work.
 - [Progress and verification](docs/progress.md) — what has actually been built and tested.
 - [AI setup and accounting](docs/ai.md) — provider configuration, data release, limits, and usage.
+- [Proactive recommendations](docs/automation.md) — service rules, cooldowns, activity history, and current limits.
 - [Notifications](docs/notifications.md) — destination setup and webhook signing.
 - [Operations](docs/operations.md) — deployment, network access, retention, backups, and key rotation.
 - [OpenAPI](docs/openapi.yaml) — implemented HTTP API.

@@ -135,12 +135,17 @@ export function FindingsPage() {
   const [filter, setFilter] = useState(""),
     [cursor, setCursor] = useState(""),
     [selected, setSelected] = useState(params.get("id") ?? "");
+  const findingID = params.get("id") ?? "";
+  const effectiveFilter = findingID ? "" : filter;
+  const effectiveCursor = findingID ? "" : cursor;
   const findings = useQuery({
-    queryKey: ["findings", filter, cursor],
+    queryKey: findingID
+      ? ["findings", effectiveFilter, effectiveCursor, findingID]
+      : ["findings", filter, cursor],
     staleTime: 0,
     queryFn: () =>
       request<{ items: Finding[]; next_cursor: string }>(
-        `/findings?state=${filter}&cursor=${cursor}`,
+        `/findings?${new URLSearchParams({ state: effectiveFilter, cursor: effectiveCursor, id: findingID })}`,
       ),
     refetchInterval: 10000,
   });
@@ -163,11 +168,17 @@ export function FindingsPage() {
         title="Findings"
         description="Observed changes, with the evidence and limits behind them."
       />
+      {params.get("id") ? (
+        <Link className="inline-link" to="/findings">
+          ← All findings
+        </Link>
+      ) : null}
       <div className="filter-row">
         <label>
           State
           <select
-            value={filter}
+            value={effectiveFilter}
+            disabled={!!params.get("id")}
             onChange={(e) => {
               setFilter(e.target.value);
               setCursor("");
@@ -181,7 +192,7 @@ export function FindingsPage() {
             )}
           </select>
         </label>
-        {cursor ? (
+        {effectiveCursor ? (
           <button className="text-button" onClick={() => setCursor("")}>
             First page
           </button>

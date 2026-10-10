@@ -101,3 +101,18 @@ Official provider and webhook references are linked in the active specification.
 - Keep report observations, limitations and manual checks together while separating optional AI controls and execution activity. Expand evidence next to its citation. All production content still comes from the existing API.
 - Refetch findings and overview counts when their views mount. The new overview shares the findings cache; its earlier empty response must not hide results from a scan just completed elsewhere.
 - Preserve the Go/Postgres/River architecture, provider consent, notification routing and deterministic workflows. This is a usability revision of delivered Slices A/B, not delivery of planned proactive features.
+
+## 2026-10-11 — Recommendation-first proactive rules
+
+- Follow the user's explicit choice to deliver local recommendations before automatic runs. Only Off/Recommendations modes are implemented; this pipeline has no model adapter, investigation enqueue or outbound delivery action.
+- Persist material-change measurements and pending service batches in the finding transaction. One separate River worker groups for 60 seconds; a service lock serializes evaluation across replicas, and policy/mapping versions invalidate stale work. Update each pending item to the latest observation without extending the window.
+- Compare error proportions directly and sampled log counts per minute. Require both relative and absolute growth; include thresholds/windows in a comparison key. A changed comparison requires another observation instead of claiming numerical growth.
+- Advance checkpoints on skipped evaluations too. Policy edits seed existing findings on their next observation, avoiding backlog on re-enable. Persist service cooldowns independently of 30-day activity retention. Finalize expired/exhausted work through the same evaluation/lock path, so cleanup also preserves deduplication.
+- Keep activity workspace-scoped, service-filtered and cursor-paged with a timestamp/ID tie-breaker. Add an optional finding ID filter so an older history entry can still open its finding beyond the first list page. Retain the existing Settings layout and manual investigation flow.
+
+## 2026-10-11 — Proactive review fixes
+
+- Pass detector coverage through finding publication. Only a newer complete scan can clear a pending signal absent from its candidates. Store that timestamp separately in forward migration 008, preserve the original activity measurement, and advance the checkpoint timestamp when skipped. Delayed candidates cannot erase newer recovery; later qualifying candidates can restore eligibility.
+- Bound actual observation age as well as batch age to 15 minutes. A historical scan executed after restart may update factual findings/events, but cannot produce a fresh proactive recommendation or consume a cooldown.
+- Recheck current Monitoring enablement/windows/thresholds inside evaluation. A shared/exclusive transaction advisory lock serializes recommendations with settings saves even before the first settings row exists. Cadence/retention changes remain comparable.
+- Derive empty effective filters/cursors for exact finding links. Preserve the user's list state for returning to the list without letting that state hide the linked finding on browser Back/Forward.

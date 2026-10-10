@@ -49,6 +49,9 @@ func (s *Server) connectionLabels(w http.ResponseWriter, r *http.Request) {
 
 // Erase expired payloads while retaining tombstones for finding/report citations.
 func (s *Server) Retain(ctx context.Context) error {
+	if e := s.retainAutomation(ctx); e != nil {
+		return e
+	}
 	if e := s.retainAI(ctx); e != nil {
 		return e
 	}
