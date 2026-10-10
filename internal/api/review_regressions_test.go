@@ -144,7 +144,8 @@ func TestOverviewFreshnessRespectsCadence(t *testing.T) {
 }
 func TestConcurrentScansSharingSourceComplete(t *testing.T) {
 	s, h, cookie, csrf, ws, v := reviewFixture(t, 80*time.Millisecond)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	ids := []string{}
 	for range 4 {
 		v.PrometheusID = ""
@@ -162,8 +163,11 @@ func TestConcurrentScansSharingSourceComplete(t *testing.T) {
 	}
 	for range ids {
 		if e := <-done; e != nil {
-			t.Fatal(e)
+			t.Error(e)
 		}
+	}
+	if t.Failed() {
+		return
 	}
 	for _, id := range ids {
 		response := call(h, "GET", "/api/v1/scans/"+id, nil, cookie, "", "")

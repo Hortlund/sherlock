@@ -154,3 +154,11 @@ Verification:
 Provider traffic remained simulated; no paid cloud calls or real external notifications were made. Prometheus/Loki adapters were unchanged, so their separate real-source suite was not rerun for these fixes.
 
 Rebuilt the existing local app with `docker compose up --build -d --wait app`. App/Postgres are healthy, `/readyz` returns `ready`, and setup still reports `initialized: true`. Existing installation data, credentials and the running demo source were preserved. Removed the disposable test database container/network after checks; no production volumes were removed. Refresh `http://localhost:8080` to load the fixes.
+
+## 2026-10-11 — CI integration pool and cleanup repair
+
+GitHub Actions run 38088142964 timed out in `TestConcurrentScansSharingSourceComplete`: on the smaller runner, pgx's CPU-dependent default pool had four connections, all retained by the four concurrent scans' advisory locks. Their next queries could never acquire a connection. The integration/browser fixture now explicitly uses ten connections, matching `cmd/sherlock`. The concurrency regression has a 15-second context and drains every worker result before returning on failure.
+
+Application cleanup now skips Compose when setup has not created `.env`; test-database cleanup runs as its own `always()` step, including when application cleanup fails.
+
+Verification: reproduced the original timeout locally with `pool_max_conns=4`; the fixed concurrency test passed three consecutive race-enabled runs with the same DSN. `make lint test` and all 14 existing browser tests (`make e2e`) passed on the published-code baseline. Workflow YAML/cleanup conditions parsed successfully, and application cleanup passed without `.env`. The separate uncommitted UI redesign was not included in this CI repair. GitHub runner verification is tracked on the repair PR.

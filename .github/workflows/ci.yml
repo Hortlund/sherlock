@@ -23,5 +23,12 @@ jobs:
       - run: make real-sources
       - run: make setup && docker compose up --build -d --wait
       - run: curl --fail http://localhost:8080/readyz
-      - if: always()
-        run: docker compose down && docker compose -f compose.test.yaml down
+      - name: Clean up application
+        if: always()
+        run: |
+          if [ -f .env ]; then
+            docker compose down
+          fi
+      - name: Clean up test database
+        if: always()
+        run: docker compose -f compose.test.yaml down
