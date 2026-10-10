@@ -18,8 +18,27 @@ type Policy = {
   cooldown_minutes: number;
   growth_multiplier: number;
   revision: number;
+  triage_provider_id?: string;
+};
+type TriageProvider = {
+  id: string;
+  kind: string;
+  triage_model?: string;
+  triage_capability?: string;
+  enabled: boolean;
 };
 type Activity = {
+  triage?: {
+    status: string;
+    reason: string;
+    run_id: string | null;
+    model: string | null;
+    provider: string | null;
+    accounting: string | null;
+    reserved: number | null;
+    charged: number | null;
+    report: { decision: string; reason: string; evidence_ids: string[] } | null;
+  };
   id: string;
   service_id: string;
   service_name: string;
@@ -66,6 +85,11 @@ export function AutomationSettings() {
     staleTime: 0,
   });
   const services = useServices();
+  const aiSettings = useQuery({
+    queryKey: ["ai-settings"],
+    queryFn: ({ signal }) =>
+      request<{ providers: TriageProvider[] }>("/ai/settings", { signal }),
+  });
   const [notice, setNotice] = useState("");
   return (
     <section className="settings-section" id="automation">
@@ -89,8 +113,9 @@ export function AutomationSettings() {
           </div>
           <p className="notification-note">
             Rules evaluate findings locally. This version recommends manual
-            investigation; it never starts an investigation or calls an AI
-            provider.
+            investigation; investigations always start manually. Optional AI
+            triage adds an advisory assessment after the local rules qualify a
+            signal.
           </p>
           {policy.error || services.error ? (
             <p role="alert">{(policy.error ?? services.error)?.message}</p>
@@ -103,6 +128,7 @@ export function AutomationSettings() {
               key={policy.data.revision}
               policy={policy.data}
               services={services.data.items}
+              providers={aiSettings.data?.providers ?? []}
               csrf={session.csrf_token}
               onSaved={(p) => {
                 cache.setQueryData(["automation-policy"], p);
@@ -145,26 +171,36 @@ export function AutomationSettings() {
             Review monitoring thresholds →
           </Link>
           <p className="field-hint">
-            Existing notification rules keep running independently. AI model
-            triage and automatic investigations are planned next.
+            Existing notification rules keep running independently. AI advice
+            cannot change findings or send alerts. Automatic investigations
+            remain disabled.
           </p>
         </aside>
       </div>
-      <ActivityHistory services={services.data?.items ?? []} />
+      {aiSettings.error ? <p role="alert">{aiSettings.error.message}</p> : null}
+      <ActivityHistory
+        services={services.data?.items ?? []}
+        csrf={session.csrf_token}
+      />
     </section>
   );
 }
 function PolicyForm({
   policy,
   services,
+  providers,
   csrf,
   onSaved,
 }: {
   policy: Policy;
   services: Service[];
+  providers: TriageProvider[];
   csrf: string;
   onSaved: (p: Policy) => void;
 }) {
+  const [triageProvider, setTriageProvider] = useState(
+    policy.triage_provider_id ?? "",
+  );
   const save = useMutation({
     mutationFn: (body: Policy) =>
       request<Policy>("/automation/policy", { body, csrf }),
@@ -178,6 +214,9 @@ function PolicyForm({
       mode: f.get("mode") as Policy["mode"],
       services: f.getAll("services").map(String),
       allow_demo: f.has("allow_demo"),
+      triage_provider_id: f.has("triage_consent")
+        ? String(f.get("triage_provider") ?? "")
+        : "",
       cooldown_minutes: Number(f.get("cooldown")),
       growth_multiplier: Number(f.get("growth")),
     });
@@ -244,6 +283,50 @@ function PolicyForm({
           defaultValue={policy.growth_multiplier}
         />
       </div>
+      <fieldset>
+        <legend>Optional AI triage</legend>
+        <label className="select-field">
+          Triage provider
+          <select
+            name="triage_provider"
+            value={triageProvider}
+            onChange={(e) => setTriageProvider(e.target.value)}
+          >
+            <option value="">Local rules only</option>
+            {triageProvider &&
+            !providers.some((p) => p.id === triageProvider) ? (
+              <option value={triageProvider}>
+                Previously selected provider · unavailable
+              </option>
+            ) : null}
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.kind} · {p.triage_model || "triage model not configured"} ·{" "}
+                {p.triage_capability ?? "untested"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            name="triage_consent"
+            defaultChecked={!!policy.triage_provider_id}
+          />
+          Allow recurring AI triage for qualifying recommendations
+        </label>
+        <p className="field-hint">
+          Sends compact detector values, windows and opaque service/evidence IDs
+          to the selected provider, with no names or log excerpts. Provider
+          service consent and demo opt-in also apply. Shares your AI budget; up
+          to 4,000 estimated input and 1,000 output tokens with a 15-second
+          deadline. No automatic paid retries or investigations. Local
+          recommendations remain available when AI is unavailable.
+        </p>
+        <Link to="#ai-settings">
+          Configure models, budgets and preview a triage payload sample →
+        </Link>
+      </fieldset>
       <p className="field-hint">
         Growth is compared with the last evaluated observation. Absolute minimum
         changes come from Monitoring settings: error-proportion increase,
@@ -261,7 +344,20 @@ function PolicyForm({
     </form>
   );
 }
-function ActivityHistory({ services }: { services: Service[] }) {
+function ActivityHistory({
+  services,
+  csrf,
+}: {
+  services: Service[];
+  csrf: string;
+}) {
+  const cache = useQueryClient();
+  const cancel = useMutation({
+    mutationFn: (id: string) =>
+      request(`/ai/runs/${id}/cancel`, { body: {}, csrf }),
+    onSuccess: () =>
+      cache.invalidateQueries({ queryKey: ["automation-activity"] }),
+  });
   const [service, setService] = useState("");
   const history = useInfiniteQuery({
     queryKey: ["automation-activity", service],
@@ -303,6 +399,7 @@ function ActivityHistory({ services }: { services: Service[] }) {
           ))}
         </select>
       </label>
+      {cancel.error ? <p role="alert">{cancel.error.message}</p> : null}
       {history.error ? <p role="alert">{history.error.message}</p> : null}
       {history.isPending ? <p role="status">Loading activity…</p> : null}
       {!history.isPending && !history.error && items.length === 0 ? (
@@ -327,6 +424,51 @@ function ActivityHistory({ services }: { services: Service[] }) {
             <time>{when(a.created_at)}</time>
           </summary>
           <p>{a.reason}</p>
+          {a.triage && a.triage.status !== "off" ? (
+            <div className="notification-note">
+              <strong>AI triage · {a.triage.status}</strong>
+              {a.triage.model ? (
+                <p>
+                  {a.triage.provider} · {a.triage.model}
+                </p>
+              ) : null}
+              {a.triage.report ? (
+                <>
+                  <p>
+                    <strong>
+                      AI advice: {a.triage.report.decision.replaceAll("_", " ")}
+                    </strong>
+                  </p>
+                  <p>{a.triage.report.reason}</p>
+                  <p className="field-hint">
+                    Advisory only. The local rule decision above is unchanged;
+                    choose whether to investigate manually.
+                  </p>
+                </>
+              ) : (
+                <p>
+                  {a.triage.reason ||
+                    "AI unavailable; local recommendation retained."}
+                </p>
+              )}
+              {a.triage.accounting ? (
+                <p className="field-hint">
+                  {a.triage.accounting} · Reserved $
+                  {((a.triage.reserved ?? 0) / 1e6).toFixed(6)} · Charged $
+                  {((a.triage.charged ?? 0) / 1e6).toFixed(6)}
+                </p>
+              ) : null}
+              {a.triage.run_id &&
+              ["queued", "analyzing"].includes(a.triage.status) ? (
+                <button
+                  disabled={cancel.isPending}
+                  onClick={() => cancel.mutate(a.triage!.run_id!)}
+                >
+                  Cancel AI triage
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {a.state === "pending" ? (
             <p>Eligible for evaluation after {when(a.due_at)}.</p>
           ) : null}

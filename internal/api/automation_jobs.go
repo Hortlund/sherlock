@@ -132,7 +132,7 @@ func (s *Server) automationClearMissing(ctx context.Context, tx pgx.Tx, ws strin
 	}
 	_, e = tx.Exec(ctx, `UPDATE automation_items i SET cleared_at=$4
  FROM automation_batches b,findings f
- WHERE b.id=i.batch_id AND b.workspace_id=i.workspace_id AND b.state='pending'
+ WHERE b.id=i.batch_id AND b.workspace_id=i.workspace_id AND (b.state='pending' OR EXISTS(SELECT 1 FROM ai_runs a WHERE a.id=b.ai_run_id AND a.state IN ('queued','analyzing')))
  AND f.id=i.finding_id AND f.workspace_id=i.workspace_id
  AND b.workspace_id=$1 AND b.service_id=$2 AND b.mapping_revision=$3
  AND i.observed_at<$4 AND (i.cleared_at IS NULL OR i.cleared_at<$4)
@@ -142,7 +142,8 @@ func (s *Server) automationClearMissing(ctx context.Context, tx pgx.Tx, ws strin
 }
 
 func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error {
-	// Service first, matching persistFindings; then batch, policy and findings.
+	// Guard workspace scope before the service, then batch, policy and findings.
+	// Optional triage admission takes AI accounting last, matching its workers.
 	var service string
 	e := s.pool.QueryRow(ctx, `SELECT service_id::text FROM automation_batches WHERE workspace_id=$1 AND id::text=$2`, a.WorkspaceID, a.BatchID).Scan(&service)
 	if errors.Is(e, pgx.ErrNoRows) {
@@ -156,10 +157,13 @@ func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error
 		return e
 	}
 	defer tx.Rollback(ctx)
+	if e = lockWorkspaceScope(ctx, tx, a.WorkspaceID); e != nil {
+		return e
+	}
 	var monitoring bool
 	var mapping int
 	var origin string
-	if e = tx.QueryRow(ctx, `SELECT monitoring,revision,origin FROM services WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, a.WorkspaceID, service).Scan(&monitoring, &mapping, &origin); e != nil {
+	if e = tx.QueryRow(ctx, `SELECT monitoring,revision,origin FROM services WHERE workspace_id=$1 AND id=$2 FOR NO KEY UPDATE`, a.WorkspaceID, service).Scan(&monitoring, &mapping, &origin); e != nil {
 		return e
 	}
 	var state string
@@ -322,7 +326,7 @@ func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error
 	}
 	if recommended {
 		state = "recommended"
-		reason = "Investigation recommended. No investigation or AI call was started."
+		reason = "Local rules recommend manual investigation. No investigation was started."
 		eligible := now.Add(time.Duration(p.CooldownMinutes) * time.Minute)
 		next = &eligible
 		if _, e = tx.Exec(ctx, `INSERT INTO automation_services(workspace_id,service_id,next_eligible_at) VALUES($1,$2,$3) ON CONFLICT(workspace_id,service_id) DO UPDATE SET next_eligible_at=EXCLUDED.next_eligible_at`, a.WorkspaceID, service, next); e != nil {
@@ -331,6 +335,11 @@ func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error
 	}
 	if _, e = tx.Exec(ctx, `UPDATE automation_batches SET state=$3,reason=$4,evaluated_at=$5,next_eligible_at=$6 WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.BatchID, state, reason, now, next); e != nil {
 		return e
+	}
+	if recommended {
+		if e = s.enqueueTriage(ctx, tx, a.WorkspaceID, a.BatchID, p); e != nil {
+			return e
+		}
 	}
 	return tx.Commit(ctx)
 }

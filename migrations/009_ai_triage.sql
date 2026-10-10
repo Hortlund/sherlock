@@ -1,0 +1,10 @@
+ALTER TABLE ai_providers ADD COLUMN triage_capability text NOT NULL DEFAULT 'untested';
+ALTER TABLE ai_runs DROP CONSTRAINT ai_runs_purpose_check;
+ALTER TABLE ai_runs ADD CONSTRAINT ai_runs_purpose_check CHECK(purpose IN ('test','analysis','triage_test','triage'));
+ALTER TABLE ai_runs ADD COLUMN triage_batch_id uuid REFERENCES automation_batches(id) ON DELETE SET NULL;
+CREATE INDEX ai_triage_batch ON ai_runs(triage_batch_id) WHERE triage_batch_id IS NOT NULL;
+DROP INDEX ai_active_test;
+CREATE UNIQUE INDEX ai_active_test ON ai_runs(provider_id,purpose) WHERE purpose IN ('test','triage_test') AND state IN ('queued','analyzing');
+ALTER TABLE automation_batches ADD COLUMN ai_run_id uuid REFERENCES ai_runs(id) ON DELETE SET NULL;
+ALTER TABLE automation_batches ADD COLUMN triage_status text NOT NULL DEFAULT 'off';
+ALTER TABLE automation_batches ADD COLUMN triage_reason text NOT NULL DEFAULT '';

@@ -27,6 +27,10 @@ type Provider = {
   enabled: boolean;
   model: string;
   capability: string;
+  triage_model?: string;
+  triage_capability?: string;
+  triage_input_price?: number;
+  triage_output_price?: number;
   services: string[];
   allow_demo: boolean;
   allow_excerpts: boolean;
@@ -141,6 +145,15 @@ export function AISettings() {
   });
   const [editing, setEditing] = useState<Provider | null | undefined>();
   const [notice, setNotice] = useState("");
+  const [triagePreview, setTriagePreview] = useState<unknown>();
+  const sample = useMutation({
+    mutationFn: (id: string) =>
+      request<{ payload: unknown }>(`/ai/providers/${id}/triage-preview`, {
+        body: {},
+        csrf: session.csrf_token,
+      }),
+    onSuccess: (v) => setTriagePreview(v.payload),
+  });
   const [newKind, setNewKind] = useState("openai");
   const refresh = () => {
     void cache.invalidateQueries({ queryKey: ["ai-settings"] });
@@ -227,6 +240,38 @@ export function AISettings() {
               </p>
               <div className="row-actions">
                 <button onClick={() => setEditing(p)}>Edit {p.kind}</button>
+                {p.triage_model ? (
+                  <>
+                    <span>
+                      Triage: {p.triage_model} ·{" "}
+                      {p.triage_capability ?? "untested"}
+                    </span>
+                    <button
+                      disabled={sample.isPending}
+                      onClick={() => sample.mutate(p.id)}
+                    >
+                      Preview {p.kind} triage sample
+                    </button>
+                    <button
+                      disabled={
+                        !p.enabled || !data.policy.enabled || action.isPending
+                      }
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Send a synthetic triage test to ${p.kind}/${p.triage_model}? This can incur API charges within your budget; no service data is included.`,
+                          )
+                        )
+                          action.mutate({
+                            path: `/ai/providers/${p.id}/triage-test`,
+                            body: { confirm: true },
+                          });
+                      }}
+                    >
+                      Test {p.kind} triage
+                    </button>
+                  </>
+                ) : null}
                 <button
                   disabled={
                     !p.enabled || !data.policy.enabled || action.isPending
@@ -297,6 +342,17 @@ export function AISettings() {
             <p role="alert" className="error">
               {(action.error || services.error || runs.error)?.message}
             </p>
+          ) : null}
+          {sample.error ? <p role="alert">{sample.error.message}</p> : null}
+          {triagePreview ? (
+            <details open>
+              <summary>Triage payload sample · no data sent</summary>
+              <p>
+                Real triage uses the same format with eligible signal numbers
+                and evidence IDs. No log excerpts or service names are sent.
+              </p>
+              <pre>{JSON.stringify(triagePreview, null, 2)}</pre>
+            </details>
           ) : null}
           <h3>AI usage and capability tests</h3>
           <button className="text-button" onClick={refresh}>
@@ -468,6 +524,13 @@ function ProviderForm({
       provider: {
         kind: provider?.kind ?? f.get("kind"),
         model: f.get("model"),
+        triage_model: f.get("triage_model"),
+        triage_input_price: Math.round(
+          Number(f.get("triage_input_price")) * 1e6,
+        ),
+        triage_output_price: Math.round(
+          Number(f.get("triage_output_price")) * 1e6,
+        ),
         revision: provider?.revision ?? 0,
         enabled: f.has("enabled"),
         services: f.getAll("services"),
@@ -530,6 +593,38 @@ function ProviderForm({
         required
         defaultValue={(provider?.output_price ?? 0) / 1e6}
       />
+      <fieldset>
+        <legend>Optional triage model</legend>
+        <p>
+          Use a separate model for compact proactive assessments. Configure
+          prices, run its synthetic test, then opt in under Automation.
+          Investigations stay manual.
+        </p>
+        <Field
+          label="Triage model ID"
+          name="triage_model"
+          maxLength={120}
+          defaultValue={provider?.triage_model ?? ""}
+        />
+        <Field
+          label="Triage input price (USD per million tokens)"
+          name="triage_input_price"
+          type="number"
+          min="0"
+          max="10000"
+          step="0.000001"
+          defaultValue={(provider?.triage_input_price ?? 0) / 1e6}
+        />
+        <Field
+          label="Triage output price (USD per million tokens)"
+          name="triage_output_price"
+          type="number"
+          min="0"
+          max="10000"
+          step="0.000001"
+          defaultValue={(provider?.triage_output_price ?? 0) / 1e6}
+        />
+      </fieldset>
       <Field
         label="Price effective date"
         name="price_date"

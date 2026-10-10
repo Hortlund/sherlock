@@ -116,3 +116,22 @@ Official provider and webhook references are linked in the active specification.
 - Bound actual observation age as well as batch age to 15 minutes. A historical scan executed after restart may update factual findings/events, but cannot produce a fresh proactive recommendation or consume a cooldown.
 - Recheck current Monitoring enablement/windows/thresholds inside evaluation. A shared/exclusive transaction advisory lock serializes recommendations with settings saves even before the first settings row exists. Cadence/retention changes remain comparable.
 - Derive empty effective filters/cursors for exact finding links. Preserve the user's list state for returning to the list without letting that state hide the linked finding on browser Back/Forward.
+
+## 2026-10-11 — Advisory AI triage
+
+- Keep the local recommendation and its cooldown immutable. An optional AI assessment is shown separately; even `observe` cannot suppress a finding, required alert or the user's manual investigation choice. Automatic investigations and the optional OpenAI Decisions endpoint remain outside this increment.
+- Reuse the existing provider transport, encrypted keys, isolated AI queue, accounting ledger and cancellation/retention controls. Select a separately priced/tested triage model under each provider. Recurring calls additionally require explicit Automation provider selection/consent; previous manual-analysis consent never activates triage.
+- Use OpenAI Responses and Anthropic Messages strict structured output with a four-value decision, short reason and scoped citations. Transmit a numeric synopsis without names, fingerprints or log excerpts. Enforce 4,000 estimated input tokens, 1,000 output tokens and a 15-second deadline from enqueue. Refusal, unknown outcome, validation failure, active service work or budget denial leaves local rules available; there is no paid replay or silent vendor fallback.
+- Admit the optional task and local recommendation in one transaction. Serialize all AI accounting with a workspace advisory lock; take service/automation/settings/finding scope locks before it for triage. Use service NO KEY UPDATE locks so manual AI foreign-key checks remain compatible. No transaction spans provider HTTP.
+- Revalidate scope/evidence/settings at dispatch and publication and request in-flight cancellation on revocation. Store references to generated results, not copied model prose in activity, so deletion and provider erasure apply consistently. Cache only successful, retained, versioned scoped requests; unknown reservations survive UTC rollover and cleanup.
+- Fixture tests cover protocol/schema, consent, limits, cancellation and accounting. They do not establish live model usefulness or account availability; these require explicit deployment tests and no production provider was enabled during development.
+
+## 2026-10-11 — AI triage review fixes
+
+- Guard manual AI dispatch validation and result publication with a shared workspace row lock before accounting. Mapping/source edits take that row exclusively; the shared guard remains compatible with admission's foreign-key checks. Avoid taking a manual service lock before this guard, since editors hold the workspace row before waiting for a service. Triage keeps its existing service/rule scope locks. Release all transaction locks before HTTP.
+- Keep Automation's selected provider in controlled form state. Delayed provider options may replace the unavailable placeholder without resetting consent or unsaved edits; intentional selection of Local rules only still disables recurring triage.
+
+## 2026-10-11 — Triage lock ordering
+
+- Extend the shared workspace scope guard to recommendation evaluation and triage dispatch/publication, before service/rule locks and AI accounting. This prevents the three-way cycle where triage holds a service while waiting for accounting, an editor holds the workspace while waiting for that service, and an accounting audit insert waits for the workspace. Keep the guard compatible with FK checks and release all transaction locks before provider HTTP.
+- Exercise actual evaluation/worker and service-edit paths with a held accounting transaction. Observe database lock waits before attempting the accounting audit insert; verify admission, dispatch and publication complete without losing the generated report or settled usage. The regression fails with PostgreSQL `40P01` in all three phases before the fix.

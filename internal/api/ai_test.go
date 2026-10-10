@@ -39,15 +39,32 @@ func fixtureAIResponse(r *http.Request, mode string) (*http.Response, error) {
 	if e := json.Unmarshal([]byte(raw), &payload); e != nil {
 		return nil, e
 	}
-	if len(payload.Evidence) == 0 {
+	var triage triagePayload
+	_ = json.Unmarshal([]byte(raw), &triage)
+	if len(payload.Evidence) == 0 && triage.Version != ai.TriageVersion {
 		return nil, errors.New("fixture requires evidence")
 	}
-	id := payload.Evidence[0].ID
+	id := ""
+	if triage.Version == ai.TriageVersion && len(triage.Signals) > 0 {
+		id = triage.Signals[0].EvidenceIDs[0]
+	} else {
+		id = payload.Evidence[0].ID
+	}
 	if mode == "foreign" {
 		id = "foreign-evidence"
 	}
 	report := ai.Report{Summary: "Fixture analysis: symptoms observed; cause remains unknown.", Observations: []ai.Claim{{Text: "The supplied signal contains observations.", EvidenceIDs: []string{id}}}, Hypotheses: []ai.Hypothesis{{Text: "A dependency may be involved, but is unverified.", SupportingIDs: []string{id}, ContradictingIDs: []string{}}}, Unknowns: []string{"Dependency health is not measured."}, Checks: []string{"Inspect dependency health manually."}}
 	doc, _ := json.Marshal(report)
+	if triage.Version == ai.TriageVersion {
+		decision := "investigate"
+		if mode == "observe" {
+			decision = "observe"
+		}
+		if mode == "authority" {
+			decision = "start_investigation"
+		}
+		doc, _ = json.Marshal(ai.TriageDecision{Decision: decision, Reason: "Observed signal merits manual review; cause remains unknown.", EvidenceIDs: []string{id}})
+	}
 	input := 100
 	if mode == "overusage" {
 		input = 13000

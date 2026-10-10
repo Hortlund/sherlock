@@ -10,14 +10,20 @@ const service = {
   monitoring: true,
 };
 const at = "2026-10-11T10:00:00Z";
-async function fixture(page: Page) {
+async function fixture(
+  page: Page,
+  withTriage = false,
+  options: { savedProvider?: string; beforeAISettings?: () => Promise<void> } = {},
+) {
+  let triageCancelled = false;
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
   let policy = {
-    mode: "off",
+    mode: options.savedProvider ? "triage_only" : "off",
+    triage_provider_id: options.savedProvider ?? "",
     services: [] as string[],
     allow_demo: false,
     cooldown_minutes: 30,
@@ -32,7 +38,7 @@ async function fixture(page: Page) {
     state,
     reason:
       state === "recommended"
-        ? "Investigation recommended. No investigation or AI call was started."
+        ? "Local rules recommend manual investigation. No investigation was started."
         : "Service recommendation cooldown is active.",
     policy_revision: 1,
     mapping_revision: 1,
@@ -40,6 +46,25 @@ async function fixture(page: Page) {
     due_at: at,
     evaluated_at: at,
     next_eligible_at: at,
+    triage: withTriage
+      ? {
+          status: triageCancelled ? "cancelled" : "completed",
+          reason: "Local recommendation retained.",
+          run_id: "triage-run",
+          model: "fixture-triage",
+          provider: "anthropic",
+          accounting: "settled",
+          reserved: 3000,
+          charged: 260,
+          report: triageCancelled
+            ? null
+            : {
+                decision: "observe",
+                reason: "Observe the supplied evidence; no confirmed cause.",
+                evidence_ids: ["e1"],
+              },
+        }
+      : undefined,
     items: [
       {
         finding_id: "old-finding",
@@ -75,6 +100,26 @@ async function fixture(page: Page) {
         body = {
           items: [service, { ...service, id: "other", name: "other-service" }],
         };
+        break;
+      case "/api/v1/ai/settings":
+        await options.beforeAISettings?.();
+        body = {
+          providers: withTriage
+            ? [
+                {
+                  id: "anthropic-provider",
+                  kind: "anthropic",
+                  triage_model: "fixture-triage",
+                  triage_capability: "ready",
+                  enabled: true,
+                },
+              ]
+            : [],
+        };
+        break;
+      case "/api/v1/ai/runs/triage-run/cancel":
+        triageCancelled = true;
+        body = { ok: true };
         break;
       case "/api/v1/automation/policy":
         if (route.request().method() === "POST") {
@@ -310,5 +355,123 @@ test("finding history links ignore retained list filters and cursors", async ({
   });
   await page.goForward();
   await expect(page.getByRole("button", { name: "First page" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("saved triage provider survives delayed settings and unrelated edits", async ({
+  page,
+}) => {
+  let releaseProviders!: () => void;
+  const providersReady = new Promise<void>((resolve) => {
+    releaseProviders = resolve;
+  });
+  const errors = await fixture(page, true, {
+    savedProvider: "anthropic-provider",
+    beforeAISettings: () => providersReady,
+  });
+  await page.goto("/settings#automation");
+  const provider = page.getByRole("combobox", {
+    name: "Triage provider",
+    exact: true,
+  });
+  try {
+    await expect(provider).toHaveValue("anthropic-provider");
+    await expect(provider).toContainText("Previously selected provider");
+    await page.getByLabel("Recommendation cooldown (minutes)").fill("45");
+  } finally {
+    releaseProviders();
+  }
+  await expect(provider).toContainText("fixture-triage");
+  await expect(provider).toHaveValue("anthropic-provider");
+  await expect(page.getByLabel("Allow recurring AI triage")).toBeChecked();
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().endsWith("/automation/policy") && r.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Save automation settings" }).click(),
+  ]);
+  await page.reload();
+  await expect(provider).toHaveValue("anthropic-provider");
+  await expect(page.getByLabel("Recommendation cooldown (minutes)")).toHaveValue("45");
+  await provider.selectOption("");
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().endsWith("/automation/policy") && r.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Save automation settings" }).click(),
+  ]);
+  await page.reload();
+  await expect(provider).toHaveValue("");
+  await expect(page.getByLabel("Allow recurring AI triage")).not.toBeChecked();
+  expect(errors).toEqual([]);
+});
+
+test("AI triage consent persists and model advice stays separate from local rules", async ({
+  page,
+}) => {
+  const errors = await fixture(page, true);
+  await page.goto("/settings#automation");
+  await expect(page).toHaveTitle(/Sherlock/);
+  await page
+    .getByRole("combobox", { name: "Mode", exact: true })
+    .selectOption("triage_only");
+  await page
+    .getByRole("combobox", { name: "Triage provider", exact: true })
+    .selectOption("anthropic-provider");
+  await page.getByLabel("Allow recurring AI triage").check();
+  await page.getByRole("button", { name: "Save automation settings" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Automation settings saved",
+  );
+  await page.reload();
+  await expect(page.getByLabel("Allow recurring AI triage")).toBeChecked();
+  await expect(
+    page.getByRole("combobox", { name: "Triage provider", exact: true }),
+  ).toHaveValue("anthropic-provider");
+  await page.locator(".automation-entry summary").click();
+  await expect(
+    page.getByText("AI advice: observe", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".automation-entry")).toContainText(
+    "Investigate recommended",
+  );
+  await expect(page.locator(".automation-entry")).toContainText(
+    "choose whether to investigate manually",
+  );
+  await page.evaluate(() => {
+    (document.activeElement as HTMLElement)?.blur();
+    window.scrollTo(0, 0);
+  });
+  await page.screenshot({
+    path: "/tmp/sherlock-automation/triage-desktop.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.screenshot({
+    path: "/tmp/sherlock-automation/triage-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByLabel("Allow recurring AI triage").uncheck();
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/automation/policy") &&
+        r.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Save automation settings" }).click(),
+  ]);
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "Triage provider", exact: true }),
+  ).toHaveValue("");
+  expect(await page.locator("vite-error-overlay").count()).toBe(0);
   expect(errors).toEqual([]);
 });

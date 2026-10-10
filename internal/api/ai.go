@@ -24,19 +24,23 @@ type AIPolicy struct {
 	Revision   int   `json:"revision"`
 }
 type AIProvider struct {
-	ID            string   `json:"id"`
-	Kind          string   `json:"kind"`
-	Revision      int      `json:"revision"`
-	Capability    string   `json:"capability"`
-	SecretSet     bool     `json:"secret_set"`
-	Enabled       bool     `json:"enabled"`
-	Model         string   `json:"model"`
-	Services      []string `json:"services"`
-	AllowDemo     bool     `json:"allow_demo"`
-	AllowExcerpts bool     `json:"allow_excerpts"`
-	InputPrice    int64    `json:"input_price"`
-	OutputPrice   int64    `json:"output_price"`
-	PriceDate     string   `json:"price_date"`
+	TriageModel       string   `json:"triage_model"`
+	TriageInputPrice  int64    `json:"triage_input_price"`
+	TriageOutputPrice int64    `json:"triage_output_price"`
+	TriageCapability  string   `json:"triage_capability"`
+	ID                string   `json:"id"`
+	Kind              string   `json:"kind"`
+	Revision          int      `json:"revision"`
+	Capability        string   `json:"capability"`
+	SecretSet         bool     `json:"secret_set"`
+	Enabled           bool     `json:"enabled"`
+	Model             string   `json:"model"`
+	Services          []string `json:"services"`
+	AllowDemo         bool     `json:"allow_demo"`
+	AllowExcerpts     bool     `json:"allow_excerpts"`
+	InputPrice        int64    `json:"input_price"`
+	OutputPrice       int64    `json:"output_price"`
+	PriceDate         string   `json:"price_date"`
 }
 
 var modelID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$`)
@@ -53,15 +57,16 @@ func loadAIProvider(ctx context.Context, q aiDB, ws, id string) (AIProvider, err
 	var p AIProvider
 	var raw []byte
 	var revision int
-	var capability string
+	var capability, triageCapability string
 	var secret bool
-	e := q.QueryRow(ctx, `SELECT id::text,kind,config,revision,capability,octet_length(secret)>0 FROM ai_providers WHERE workspace_id=$1 AND id::text=$2 AND NOT deleted`, ws, id).Scan(&p.ID, &p.Kind, &raw, &revision, &capability, &secret)
+	e := q.QueryRow(ctx, `SELECT id::text,kind,config,revision,capability,triage_capability,octet_length(secret)>0 FROM ai_providers WHERE workspace_id=$1 AND id::text=$2 AND NOT deleted`, ws, id).Scan(&p.ID, &p.Kind, &raw, &revision, &capability, &triageCapability, &secret)
 	if e != nil {
 		return p, e
 	}
 	e = json.Unmarshal(raw, &p)
 	p.Revision = revision
 	p.Capability = capability
+	p.TriageCapability = triageCapability
 	p.SecretSet = secret
 	if p.Services == nil {
 		p.Services = []string{}
@@ -71,14 +76,24 @@ func loadAIProvider(ctx context.Context, q aiDB, ws, id string) (AIProvider, err
 func aiAllowed(p AIProvider, service, origin string) bool {
 	return p.Enabled && slices.Contains(p.Services, service) && (origin != "demo" || p.AllowDemo)
 }
+
+// Acquire before service/rule scope locks and AI accounting. Mapping/source
+// editors take the workspace row exclusively before services; this shared guard
+// keeps that order while allowing accounting writes' workspace FK checks.
+// Never retain this transaction lock across provider HTTP.
+func lockWorkspaceScope(ctx context.Context, tx pgx.Tx, ws string) error {
+	_, e := tx.Exec(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR KEY SHARE`, ws)
+	return e
+}
+
 func aiWorkspaceLock(ctx context.Context, tx pgx.Tx, ws string) error {
-	_, e := tx.Exec(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, ws)
+	_, e := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,731904))`, ws)
 	return e
 }
 func (s *Server) aiRoutes(m *http.ServeMux) {
 	for path, h := range map[string]http.HandlerFunc{
 		"GET /api/v1/ai/settings": s.getAISettings, "POST /api/v1/ai/policy": s.saveAIPolicy, "POST /api/v1/ai/providers": s.saveAIProvider, "POST /api/v1/ai/providers/{id}": s.saveAIProvider, "POST /api/v1/ai/providers/{id}/delete": s.deleteAIProvider,
-		"POST /api/v1/ai/providers/{id}/test": s.startAITest, "POST /api/v1/investigations/{id}/ai/preview": s.previewAI, "POST /api/v1/investigations/{id}/ai": s.startAIAnalysis,
+		"POST /api/v1/ai/providers/{id}/test": s.startAITest, "POST /api/v1/ai/providers/{id}/triage-test": s.startAITriageTest, "POST /api/v1/ai/providers/{id}/triage-preview": s.previewTriage, "POST /api/v1/investigations/{id}/ai/preview": s.previewAI, "POST /api/v1/investigations/{id}/ai": s.startAIAnalysis,
 		"GET /api/v1/ai/runs": s.listAIRuns, "POST /api/v1/ai/runs/{id}/cancel": s.cancelAI, "POST /api/v1/ai/runs/{id}/delete": s.deleteAIContent, "POST /api/v1/ai/runs/{id}/reconcile": s.reconcileAI,
 	} {
 		m.Handle(path, s.requireSession(h))
@@ -176,7 +191,7 @@ func (s *Server) saveAIPolicy(w http.ResponseWriter, r *http.Request) {
 	s.json(w, 200, p)
 }
 
-// All AI writes take workspace then provider/run locks. No transaction spans provider HTTP.
+// AI accounting/configuration writes share a workspace advisory lock, then provider/run locks. No transaction spans provider HTTP.
 func cancelAIQueued(ctx context.Context, tx pgx.Tx, ws, provider, reason string, purge bool) error {
 	_, e := tx.Exec(ctx, `UPDATE ai_runs SET state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END,reason=CASE WHEN state IN ('queued','analyzing') THEN $3 ELSE reason END,finished_at=CASE WHEN state IN ('queued','analyzing') THEN now() ELSE finished_at END,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END,payload=NULL,report=CASE WHEN $4 THEN NULL ELSE report END WHERE workspace_id=$1 AND ($2='' OR provider_id::text=$2)`, ws, provider, reason, purge)
 	return e
@@ -190,6 +205,10 @@ func (s *Server) saveAIProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := in.Provider
+	if p.TriageModel != "" && (!modelID.MatchString(p.TriageModel) || p.TriageInputPrice <= 0 || p.TriageOutputPrice <= 0 || p.TriageInputPrice > 10000000000 || p.TriageOutputPrice > 10000000000) {
+		s.fail(w, r, 400, "invalid_triage_model", "Supply a valid triage model and positive input/output prices.")
+		return
+	}
 	if (p.Kind != "openai" && p.Kind != "anthropic") || !modelID.MatchString(p.Model) || len(p.Services) > 100 || p.InputPrice < 0 || p.OutputPrice < 0 || p.InputPrice > 10000000000 || p.OutputPrice > 10000000000 || len(in.APIKey) > 1024 || strings.ContainsAny(in.APIKey, "\r\n") {
 		s.fail(w, r, 400, "invalid_provider", "Choose OpenAI or Anthropic, a model ID, valid prices and at most 100 services.")
 		return
@@ -268,9 +287,10 @@ func (s *Server) saveAIProvider(w http.ResponseWriter, r *http.Request) {
 	p.ID = id
 	p.Revision = revision
 	p.Capability = "untested"
+	p.TriageCapability = "untested"
 	p.SecretSet = true
 	raw, _ := json.Marshal(p)
-	_, e = tx.Exec(ctx, `INSERT INTO ai_providers(id,workspace_id,kind,config,revision,secret) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET config=$4,revision=$5,secret=$6,capability='untested'`, id, ws, p.Kind, raw, revision, encrypted)
+	_, e = tx.Exec(ctx, `INSERT INTO ai_providers(id,workspace_id,kind,config,revision,secret) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET config=$4,revision=$5,secret=$6,capability='untested',triage_capability='untested'`, id, ws, p.Kind, raw, revision, encrypted)
 	if e == nil {
 		e = cancelAIQueued(ctx, tx, ws, id, "Provider configuration changed.", true)
 	}

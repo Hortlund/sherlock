@@ -49,6 +49,14 @@ func (s *Server) startAITest(w http.ResponseWriter, r *http.Request) {
 	in.ProviderID = r.PathValue("id")
 	s.enqueueAI(w, r, in, "")
 }
+func (s *Server) startAITriageTest(w http.ResponseWriter, r *http.Request) {
+	var in aiStart
+	if !s.decode(w, r, &in) {
+		return
+	}
+	in.ProviderID = r.PathValue("id")
+	s.enqueueAI(w, r, in, "", "triage_test")
+}
 func (s *Server) startAIAnalysis(w http.ResponseWriter, r *http.Request) {
 	var in aiStart
 	if !s.decode(w, r, &in) {
@@ -56,7 +64,18 @@ func (s *Server) startAIAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 	s.enqueueAI(w, r, in, r.PathValue("id"))
 }
-func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, runID string) {
+func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, runID string, roles ...string) {
+	purpose, origin := "test", "demo"
+	if len(roles) > 0 {
+		purpose = roles[0]
+	}
+	_, outputLimit := ai.Limits(purpose)
+	promptVersion := ai.PromptVersion
+	deadlineSeconds := 180
+	if ai.IsTriage(purpose) {
+		promptVersion = ai.TriageVersion
+		deadlineSeconds = 15
+	}
 	if !in.Confirm {
 		s.fail(w, r, 400, "confirmation_required", "Confirm sending this bounded payload to the selected provider. API usage may incur charges.")
 		return
@@ -82,16 +101,18 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 		s.missing(w, r, e)
 		return
 	}
+	if ai.IsTriage(purpose) {
+		p = triageProvider(p)
+	}
 	if !policy.Enabled || !p.Enabled || policy.RunLimit <= 0 || p.InputPrice <= 0 || p.OutputPrice <= 0 {
 		s.fail(w, r, 409, "ai_disabled", "Enable workspace processing, provider access and positive budgets/prices first.")
 		return
 	}
-	input, e := s.buildAIInput(ctx, tx, ws, runID, p)
+	input, e := s.invocationInput(ctx, tx, ws, runID, "", purpose, p)
 	if e != nil {
 		s.fail(w, r, 409, "evidence_unavailable", "Evidence is unavailable, expired, out of scope, or the service mapping changed. Collect a new investigation.")
 		return
 	}
-	purpose, origin := "test", "demo"
 	if runID != "" {
 		purpose = "analysis"
 		origin = input.Service.Origin
@@ -109,7 +130,7 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 		}
 	}
 	var existing string
-	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND purpose=$6 AND (state IN ('queued','analyzing') OR (state='completed' AND NOT $7 AND report IS NOT NULL AND expires_at>now())) ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, policy.Revision, input.Digest, purpose, in.Fresh || purpose == "test").Scan(&existing)
+	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND purpose=$6 AND (state IN ('queued','analyzing') OR (state='completed' AND NOT $7 AND report IS NOT NULL AND expires_at>now())) ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, policy.Revision, input.Digest, purpose, in.Fresh || purpose == "test" || purpose == "triage_test").Scan(&existing)
 	if e == nil {
 		s.json(w, 202, map[string]any{"id": existing, "reused": true})
 		return
@@ -119,7 +140,7 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 		return
 	}
 	var active bool
-	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ai_runs WHERE workspace_id=$1 AND state IN ('queued','analyzing') AND (service_id::text=$2 OR ($2='' AND provider_id=$3 AND purpose='test')))`, ws, input.Service.ID, p.ID).Scan(&active)
+	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ai_runs WHERE workspace_id=$1 AND state IN ('queued','analyzing') AND (service_id::text=$2 OR ($2='' AND provider_id=$3 AND purpose=$4)))`, ws, input.Service.ID, p.ID, purpose).Scan(&active)
 	if e != nil {
 		s.internal(w, r, e)
 		return
@@ -134,13 +155,13 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 		s.internal(w, r, e)
 		return
 	}
-	reserved := ai.Cost(int64(input.Bound), ai.OutputLimit, p.InputPrice, p.OutputPrice)
+	reserved := ai.Cost(int64(input.Bound), int64(outputLimit), p.InputPrice, p.OutputPrice)
 	if reserved > policy.RunLimit || admitted+reserved > policy.DailyLimit {
 		s.fail(w, r, 409, "budget_exhausted", "AI budget exhausted or reservation exceeds the per-run limit. Existing uncertain reservations still count.")
 		return
 	}
 	var id string
-	e = tx.QueryRow(ctx, `INSERT INTO ai_runs(workspace_id,provider_id,provider_revision,policy_revision,run_id,service_id,purpose,model,origin,digest,payload,evidence_ids,reserved,input_bound,input_price,output_price,price_date,expires_at,deadline) VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now()+interval '180 seconds') RETURNING id::text`, ws, p.ID, p.Revision, policy.Revision, runID, input.Service.ID, purpose, p.Model, origin, input.Digest, input.Payload, input.IDs, reserved, input.Bound, p.InputPrice, p.OutputPrice, p.PriceDate, input.Expires).Scan(&id)
+	e = tx.QueryRow(ctx, `INSERT INTO ai_runs(workspace_id,provider_id,provider_revision,policy_revision,run_id,service_id,purpose,model,origin,digest,payload,evidence_ids,reserved,input_bound,input_price,output_price,price_date,expires_at,deadline,output_limit,prompt_version) VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now()+$19*interval '1 second',$20,$21) RETURNING id::text`, ws, p.ID, p.Revision, policy.Revision, runID, input.Service.ID, purpose, p.Model, origin, input.Digest, input.Payload, input.IDs, reserved, input.Bound, p.InputPrice, p.OutputPrice, p.PriceDate, input.Expires, deadlineSeconds, outputLimit, promptVersion).Scan(&id)
 	if e == nil {
 		var job *rivertype.JobInsertResult
 		job, e = s.jobs.InsertTx(ctx, tx, aiArgs{WorkspaceID: ws, ID: id}, &river.InsertOpts{Queue: "ai", MaxAttempts: 20})

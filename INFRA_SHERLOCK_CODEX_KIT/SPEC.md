@@ -1,7 +1,7 @@
 # Infra Sherlock — Product Specification
 
 **Version:** 1.2 (AI and notification planning revision, 2026-10-10)  
-**Status:** Deterministic MVP delivered; Phase 2 outbound notifications and reactive OpenAI/Anthropic analysis (Slices A/B) implemented and locally verified. Slice C now includes local proactive recommendations and history. Model triage, automatic investigations, tools/follow-up and inbound triggers remain planned. See project `docs/progress.md` for actual verification.
+**Status:** Deterministic MVP delivered; Phase 2 outbound notifications and reactive OpenAI/Anthropic analysis (Slices A/B) implemented and locally verified. Slice C now includes local proactive recommendations and history. Optional OpenAI/Anthropic advisory triage is implemented. Automatic investigations, tools/follow-up and inbound triggers remain planned. See project `docs/progress.md` for actual verification.
 **Stack:** Go backend, React/TypeScript frontend, PostgreSQL  
 **Product:** Self-hosted reliability investigations backed by observable evidence
 
@@ -349,7 +349,7 @@ Example: checkout errors rise → existing detector records a finding → config
 
 ## 15. Providers, models, and data handling
 
-**Delivered Slice B:** explicit user-requested analysis of existing evidence, one selected investigation model per provider, synthetic capability checks, privacy preview, cost admission and usage records. One invocation per run, no tools or automatic calls. Triage roles/Decisions, multi-step exploration and follow-up are later slices. The concrete current limits and provider retention caveats are documented in [AI operations](../docs/ai.md).
+**Delivered Slice B:** explicit user-requested analysis of existing evidence, one selected investigation model per provider, synthetic capability checks, privacy preview, cost admission and usage records. One invocation per run, no tools or automatic calls. Separate triage model roles are now available through the advisory Slice C increment below; Decisions, multi-step exploration and follow-up remain later work. The concrete current limits and provider retention caveats are documented in [AI operations](../docs/ai.md).
 
 Provide separate Go integration boundaries for `Triage` and `Investigate`, with provider-specific wire formats hidden behind internal typed requests/results. Support:
 
@@ -373,7 +373,13 @@ The first Slice C increment implements local rules only, with **Off** (default) 
 
 Recommendation cooldown defaults to 30 minutes (5–1440 allowed); relative growth defaults to 2× (1.5–10 allowed) and must also meet the detector's absolute minimum. Log counts are normalized per sampled minute. Window/threshold changes reset comparison. Settings revisions invalidate queued old-policy work and seed existing findings on their next observation; enabling does not replay a backlog. Skipped evaluations advance the baseline, so cooldown expiry alone does not requeue them. Jobs older than 15 minutes or with exhausted retries become skipped. Keep 30 days of activity, while retaining checkpoints/cooldowns for deduplication. Settings provides service-filtered cursor history and links to findings. [Automation operations](../docs/automation.md) documents the delivered behavior.
 
-The decision adapters and automatic behavior described below remain later Slice C work.
+### Delivered advisory AI triage increment
+
+Optional OpenAI Responses and Anthropic Messages structured triage now supplements eligible local recommendations. Separate model/pricing/capability configuration uses existing provider credentials and service/demo consent. Automation requires explicit recurring opt-in. Each task reserves cost in the existing AI ledger, uses the AI queue, permits at most 4,000 estimated input and 1,000 output tokens, and expires 15 seconds after enqueue. The compact numeric summary has no names, log excerpts, fingerprints, selectors or URLs. Dispatch/publication recheck scope, current policies, lifecycle, settings and retained evidence. Failed/unavailable triage leaves the local rule decision intact.
+
+Persist model advice separately as investigate, observe, needs_attention or need_more_data with a short validated/redacted reason and scoped evidence citations. Activity exposes provider/model, accounting, cancellation and reuse. Models cannot change the local decision/cooldown, alter findings, suppress notifications or start investigations. Successful results may be reused for identical scoped evidence and versioned model/policy/request content; generated content expires no later than 24 hours or source expiry. Unknown dispatch outcomes retain reservations and are never automatically replayed.
+
+The optional OpenAI Decisions adapter and automatic execution described below remain later Slice C work.
 
 Before publishing a recommendation, recheck current Monitoring detector enablement and comparison settings, serialized with settings saves. Both the batch and the actual observation must be at most 15 minutes old. A newer complete scan without the same qualifying signal invalidates its pending item without resolving the finding; missing/disabled coverage does not prove recovery. Older delayed observations cannot undo that recovery, and a newer qualifying observation can restore eligibility. Skips never start or extend recommendation cooldowns. Exact finding links ignore retained list filters and pagination, including browser history navigation.
 
@@ -492,4 +498,4 @@ Acceptance requires existing foundation tests plus: provider contract fixtures f
 
 Maintain a versioned evaluation set covering the demo, healthy noise, insufficient data, overlapping incidents, contradictory evidence, and malicious log instructions. Require all deterministic safety/contract assertions to pass and compare AI report claims with labeled facts. Record usefulness and cost measurements before choosing default model IDs. Fixture success is not live provider certification: each enabled provider and notification adapter needs a documented, bounded live smoke test using user-supplied credentials and an explicitly selected test destination before release. No credentials or external test messages are required for this planning task.
 
-Phase 2 Slices **A/B are implemented and locally verified with fixtures**; local recommendations/history from C are also delivered, with model triage/automatic runs and D–E still planned. The [implementation plan](../docs/phase2-plan.md) defines ordered slices and acceptance gates. Existing no-AI demo behavior remains the baseline throughout implementation.
+Phase 2 Slices **A/B are implemented and locally verified with fixtures**; local recommendations/history from C are also delivered, with advisory OpenAI/Anthropic triage delivered, and automatic runs and D–E still planned. The [implementation plan](../docs/phase2-plan.md) defines ordered slices and acceptance gates. Existing no-AI demo behavior remains the baseline throughout implementation.

@@ -50,6 +50,19 @@ test("AI providers: setup, preview, report, fallback, cancellation and budgets",
       .getByLabel("AI provider", { exact: true })
       .selectOption(kind);
     await settings.getByLabel("Analysis model ID").fill("fixture-success");
+    await settings
+      .getByLabel("Triage model ID", { exact: true })
+      .fill("fixture-triage");
+    await settings
+      .getByLabel("Triage input price (USD per million tokens)", {
+        exact: true,
+      })
+      .fill("1");
+    await settings
+      .getByLabel("Triage output price (USD per million tokens)", {
+        exact: true,
+      })
+      .fill("2");
     await settings.getByLabel("Provider API key").fill("fixture-only");
     await settings
       .getByLabel("Input price (USD per million tokens)", { exact: true })
@@ -77,6 +90,29 @@ test("AI providers: setup, preview, report, fallback, cancellation and budgets",
         providers[kind] = provider.id;
         return provider.capability;
       })
+      .toBe("ready");
+    await settings
+      .getByRole("button", {
+        name: `Preview ${kind} triage sample`,
+        exact: true,
+      })
+      .click();
+    await expect(
+      settings.getByText("Triage payload sample · no data sent", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await settings
+      .getByRole("button", { name: `Test ${kind} triage`, exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          (
+            await (await page.request.get("/api/v1/ai/settings")).json()
+          ).providers.find((p: { kind: string }) => p.kind === kind)
+            .triage_capability,
+      )
       .toBe("ready");
     await settings.getByRole("button", { name: "Refresh AI status" }).click();
     await expect(

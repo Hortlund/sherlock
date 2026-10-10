@@ -28,20 +28,28 @@ type Result struct {
 
 var safeRequestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
 
-func RequestBody(kind, model string, payload json.RawMessage) ([]byte, error) {
-	if kind == "openai" {
-		return json.Marshal(map[string]any{"model": model, "store": false, "max_output_tokens": OutputLimit, "instructions": Instructions, "input": string(payload), "text": map[string]any{"format": map[string]any{"type": "json_schema", "name": "sherlock_analysis", "strict": true, "schema": Schema()}}})
+func RequestBody(kind, model string, payload json.RawMessage, purpose ...string) ([]byte, error) {
+	instructions, name, schema, output := Instructions, "sherlock_analysis", Schema(), OutputLimit
+	if len(purpose) > 0 && IsTriage(purpose[0]) {
+		instructions, name, schema, output = TriageInstructions, "sherlock_triage", TriageSchema(), TriageOutputLimit
 	}
-	return json.Marshal(map[string]any{"model": model, "max_tokens": OutputLimit, "system": Instructions, "messages": []any{map[string]any{"role": "user", "content": string(payload)}}, "output_config": map[string]any{"format": map[string]any{"type": "json_schema", "schema": Schema()}}})
+	if kind == "openai" {
+		return json.Marshal(map[string]any{"model": model, "store": false, "max_output_tokens": output, "instructions": instructions, "input": string(payload), "text": map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": schema}}})
+	}
+	return json.Marshal(map[string]any{"model": model, "max_tokens": output, "system": instructions, "messages": []any{map[string]any{"role": "user", "content": string(payload)}}, "output_config": map[string]any{"format": map[string]any{"type": "json_schema", "schema": schema}}})
 }
-func InputBound(kind, model string, payload json.RawMessage) (int, error) {
-	b, e := RequestBody(kind, model, payload)
+func InputBound(kind, model string, payload json.RawMessage, purpose ...string) (int, error) {
+	b, e := RequestBody(kind, model, payload, purpose...)
 	return len(b) + 1024, e
 }
-func (c *Client) Analyze(ctx context.Context, kind, model, key string, payload json.RawMessage) Result {
+func (c *Client) Analyze(ctx context.Context, kind, model, key string, payload json.RawMessage, purpose ...string) Result {
 	out := Result{State: "unknown", Reason: "No complete acknowledgement. Provider charges may have occurred; reservation retained."}
-	body, e := RequestBody(kind, model, payload)
-	if e != nil || len(body)+1024 > InputLimit {
+	limit := InputLimit
+	if len(purpose) > 0 {
+		limit, _ = Limits(purpose[0])
+	}
+	body, e := RequestBody(kind, model, payload, purpose...)
+	if e != nil || len(body)+1024 > limit {
 		out.State = "failed"
 		out.Reason = "Input exceeds the bounded analysis context."
 		out.UsageKnown = true
@@ -167,6 +175,9 @@ func (c *Client) Analyze(ctx context.Context, kind, model, key string, payload j
 	if out.State != "completed" {
 		out.Text = nil
 		out.Reason = "Provider refused or truncated the analysis; deterministic report remains available."
+		if len(purpose) > 0 && IsTriage(purpose[0]) {
+			out.Reason = "Provider refused or truncated triage; local recommendation retained."
+		}
 	}
 	return out
 }

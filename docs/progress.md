@@ -218,3 +218,46 @@ Verification:
 - Rebuilt the existing local app. App/Postgres are healthy, `/readyz` returns ready, setup remains initialized, and migration 008 is applied. Existing data and credentials are preserved.
 
 Tests use disposable PostgreSQL and simulated upstream/provider/delivery fixtures. Removed the disposable test database container/network after checks. No paid model calls or real external messages were sent. Browser coverage is Chromium; no Safari/Firefox validation is claimed.
+
+## 2026-10-11 — Slice C, second increment: advisory AI triage
+
+Added optional OpenAI Responses and Anthropic Messages triage after local recommendation gates. Each provider has a separately configured and tested triage model/prices, sharing its encrypted credential and service/demo consent. Automation requires an explicit recurring opt-in. Activity displays model advice separately from the immutable local rule decision; an `observe` response cannot change findings, suppress factual alerts, or start an investigation. All investigations remain manual.
+
+Triage transmits bounded numeric detector summaries and opaque IDs, without names, log excerpts or user-authored text. It shares the isolated AI queue, budget reservations and reconciliation, with a 15-second enqueue-to-completion deadline, 4,000 estimated input allowance and 1,000 output tokens. Scoped cache reuse, dispatch/publication revalidation, in-flight cancellation and content expiry preserve the existing accounting/privacy boundaries. Migration 009 is additive; earlier migration and archived specification files are unchanged. AI accounting now uses a workspace advisory lock to avoid service foreign-key lock inversion during automatic admission.
+
+Verification:
+
+- Full `make lint test` passed: formatting, Go vet, TypeScript and race-enabled unit/PostgreSQL integration suites (API integration completed in 216.868 seconds). Existing provider, notification, automation, concurrency, retention and backup/restore regressions passed. New provider contract tests cover schema/decision/citation validation, redaction, wire ceilings and rejection before HTTP.
+- New PostgreSQL tests cover both providers' independent triage capabilities, explicit confirmation, local-versus-model decisions, idempotence, manual investigation boundaries, monitoring/mapping/detector/lifecycle/policy/source/recovery/deadline/privacy revocation, invalid/refused/unknown/over-limit responses, budget and prior-day reservations, consent, scoped cache reuse, deletion and actual River worker cancellation. After final status-copy corrections, focused race-enabled provider/fallback checks passed again (17.894 seconds); final lint and diff checks passed.
+- `make e2e`: all 21 Chromium tests passed. Extended real API/worker provider fixture journeys configure, preview and test both triage roles. A new intercepted Automation journey selects a provider, opts into recurring triage, saves/reloads consent, compares AI `observe` with the retained local investigation recommendation, and disables consent again. A final focused rerun passed after making screenshot capture scroll to the top and clear focus; no application CSS workaround was needed.
+- Browser plugin not available; used repository Playwright at `http://127.0.0.1:18080`, with 1536×1024 desktop and 390×844 mobile viewports. Page identity, meaningful content, framework-overlay absence, console health and interaction checks passed. Inspected desktop/mobile screenshots in `/tmp/sherlock-automation/triage-desktop.png` and `triage-mobile.png`; controls and advice remain readable, with no mobile document overflow.
+- OpenAPI parsed with 55 paths and 388 local references resolved; 26 links in the updated setup/roadmap documents resolved. All seven archive files are unchanged. README, active spec, plan, decisions and operations now distinguish delivered advisory triage from future automatic investigations and optional OpenAI Decisions.
+- Rebuilt the existing demo with `docker compose up --build -d --wait app`. App/PostgreSQL are healthy, `/readyz` returns ready, setup remains initialized, and migration 009 is applied. Existing data, credentials and demo source are preserved. No provider or automation policy was enabled on the user's installation.
+
+No paid provider calls or real external messages were made. Provider responses use fixture transports; live model access, latency and usefulness still need deployment validation. Safari/Firefox and the separate real telemetry-source suite were not repeated. Changes are left uncommitted for review.
+
+## 2026-10-11 — AI triage review fixes
+
+Fixed both review findings. Manual AI now takes a shared workspace row guard before accounting at dispatch validation and result publication. Mapping/privacy edits use the exclusive form and cannot commit between validation and publication; edits that commit during provider HTTP cause generated content to be withheld. Triage keeps its existing service/rule scope guards. Locks are released before HTTP, and the shared guard remains compatible with admission's foreign-key checks. Automation's provider dropdown now holds controlled state, preserving a saved selection and unrelated unsaved edits when provider options arrive late.
+
+Verification:
+
+- Final `make lint test` passed: formatting, vet, TypeScript and race-enabled Go/PostgreSQL suites; API integration completed in 239.054 seconds. Six new concurrency regressions cover OpenAI and Anthropic at dispatch, publication, and a privacy edit that commits during HTTP. Database barriers prove the edit actually waits, rather than relying on a timing-only assertion. A separate disposable-database probe confirmed that a waiting editor does not block a compatible admission foreign-key check behind the shared guard.
+- All 22 Chromium tests passed via `make e2e`. The new delayed-response regression verifies the saved provider before/after loading, edits cooldown while loading, saves/reloads both settings, and then intentionally selects Local rules only and confirms recurring consent is disabled. Existing provider, automation/manual-boundary, notification, findings, investigation and UI journeys passed.
+- Browser plugin not available; used repository Playwright at `http://127.0.0.1:18080`. Existing desktop/mobile automation checks and screenshots passed, with no relevant console errors or document overflow. Screenshot evidence remains outside the repository in `/tmp/sherlock-automation/`.
+- Rebuilt the existing demo with the final fix. App/PostgreSQL are healthy, `/readyz` returns ready and setup remains initialized. Existing data and credentials are preserved. Archived specs and committed migrations are unchanged; `git diff --check` passed.
+
+Investigations remain manual. Tests used fixture provider transports, with no paid calls or external messages. Removed the disposable test database after verification. Changes remain uncommitted.
+
+## 2026-10-11 — Triage concurrency review fix
+
+Fixed the reproduced three-way deadlock between triage, service edits and AI accounting writes. Recommendation evaluation and triage dispatch/publication now acquire the same shared workspace scope guard as manual analysis before taking service/rule locks and the accounting advisory lock. This prevents a mapping editor from holding the workspace while waiting on triage's service lock, while permitting accounting writes' foreign-key checks. Transaction locks are still released before provider HTTP.
+
+Verification:
+
+- Added `TestTriageScopeMappingAccountingConcurrency` using real evaluation/worker and service-edit paths plus a held accounting transaction. Database-observed waits force overlap at admission, dispatch and publication. All three scenarios reproduced PostgreSQL `40P01` before the fix and passed afterward (focused race-enabled run: 8.552 seconds), retaining the local recommendation, completed AI report and settled accounting.
+- Full `make lint test` passed: formatting, Go vet, TypeScript, race-enabled unit tests and the PostgreSQL API suite (241.970 seconds). Existing manual privacy guards, both provider adapters, budgets, cancellation, automation cooldowns and other backend regressions passed.
+- Rebuilt the existing demo with the fix. App/PostgreSQL are healthy and `/readyz` returns ready. No configuration or credentials were changed. Archived specs and earlier migrations remain unchanged; `git diff --check` passed.
+- Updated AI/automation operations, decisions and the Phase 2 plan with the lock ordering. This fix changes no frontend code, so browser tests were not repeated; the previous 22-test Chromium result remains the last browser verification.
+
+Investigations remain manual. Provider responses were fixtures; no paid calls or external messages were sent. The disposable test database was removed after verification. Changes remain uncommitted.

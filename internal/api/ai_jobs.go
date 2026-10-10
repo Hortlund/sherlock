@@ -26,14 +26,27 @@ func (w *aiWorker) Timeout(*river.Job[aiArgs]) time.Duration { return 190 * time
 func (w *aiWorker) Work(ctx context.Context, j *river.Job[aiArgs]) error {
 	return w.server.executeAI(ctx, j.Args)
 }
+
+// Both analysis and triage must serialize mapping/privacy validation with edits.
+// Take scope locks before accounting, and release them before provider HTTP.
+func lockAIExecutionScope(ctx context.Context, tx pgx.Tx, ws, service, batch string) error {
+	if batch != "" {
+		return lockTriageScope(ctx, tx, ws, batch)
+	}
+	if service == "" {
+		return nil // Synthetic capability test.
+	}
+	return lockWorkspaceScope(ctx, tx, ws)
+}
+
 func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 	conn, e := s.pool.Acquire(ctx)
 	if e != nil {
 		return e
 	}
 	defer conn.Release()
-	var providerID string
-	e = conn.QueryRow(ctx, `SELECT provider_id::text FROM ai_runs WHERE workspace_id=$1 AND id::text=$2`, a.WorkspaceID, a.ID).Scan(&providerID)
+	var providerID, serviceID, batchID string
+	e = conn.QueryRow(ctx, `SELECT provider_id::text,COALESCE(service_id::text,''),COALESCE(triage_batch_id::text,'') FROM ai_runs WHERE workspace_id=$1 AND id::text=$2`, a.WorkspaceID, a.ID).Scan(&providerID, &serviceID, &batchID)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return nil
 	}
@@ -60,16 +73,19 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 		return e
 	}
 	defer tx.Rollback(ctx)
+	if e = lockAIExecutionScope(ctx, tx, a.WorkspaceID, serviceID, batchID); e != nil {
+		return e
+	}
 	if e = aiWorkspaceLock(ctx, tx, a.WorkspaceID); e != nil {
 		return e
 	}
 	var state, runID, purpose, model, digest string
-	var providerRev, policyRev, inputBound int
+	var providerRev, policyRev, inputBound, outputLimit int
 	var started *time.Time
 	var deadline, expires time.Time
 	var payload []byte
 	var inputPrice, outputPrice int64
-	e = tx.QueryRow(ctx, `SELECT state,COALESCE(run_id::text,''),purpose,model,digest,provider_revision,policy_revision,input_bound,started_at,deadline,expires_at,payload,input_price,output_price FROM ai_runs WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, a.WorkspaceID, a.ID).Scan(&state, &runID, &purpose, &model, &digest, &providerRev, &policyRev, &inputBound, &started, &deadline, &expires, &payload, &inputPrice, &outputPrice)
+	e = tx.QueryRow(ctx, `SELECT state,COALESCE(run_id::text,''),purpose,model,digest,provider_revision,policy_revision,input_bound,output_limit,started_at,deadline,expires_at,payload,input_price,output_price FROM ai_runs WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, a.WorkspaceID, a.ID).Scan(&state, &runID, &purpose, &model, &digest, &providerRev, &policyRev, &inputBound, &outputLimit, &started, &deadline, &expires, &payload, &inputPrice, &outputPrice)
 	if e != nil {
 		return e
 	}
@@ -82,6 +98,9 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 			err = tx.Commit(ctx)
 		}
 		return err
+	}
+	if purpose == "triage" && batchID == "" {
+		return finishEarly("cancelled", "Triage activity is no longer retained.")
 	}
 	if started != nil {
 		return finishEarly("unknown", "Interrupted after dispatch intent; no automatic paid replay. Verify provider usage before reconciling.")
@@ -97,14 +116,17 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 	if e != nil {
 		return e
 	}
+	if ai.IsTriage(purpose) {
+		p = triageProvider(p)
+	}
 	if !p.Enabled || !policy.Enabled || p.Revision != providerRev || policy.Revision != policyRev {
 		return finishEarly("cancelled", "Provider or workspace policy changed before dispatch.")
 	}
-	input, e := s.buildAIInput(ctx, tx, a.WorkspaceID, runID, p)
+	input, e := s.invocationInput(ctx, tx, a.WorkspaceID, runID, batchID, purpose, p)
 	if e != nil || input.Digest != digest || payload == nil {
 		return finishEarly("cancelled", "Evidence changed, expired, or became unavailable before dispatch.")
 	}
-	if purpose == "analysis" && (!aiAllowed(p, input.Service.ID, input.Service.Origin) || p.Capability != "ready") {
+	if (purpose == "analysis" || purpose == "triage") && (!aiAllowed(p, input.Service.ID, input.Service.Origin) || p.Capability != "ready") {
 		return finishEarly("cancelled", "Service or provider is no longer eligible for AI.")
 	}
 	var encrypted []byte
@@ -140,6 +162,10 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 			case <-ticker.C:
 				var allowed bool
 				err := s.pool.QueryRow(callCtx, `SELECT a.state='analyzing' AND a.expires_at>now() AND (a.service_id IS NULL OR v.revision=$3) FROM ai_runs a LEFT JOIN services v ON v.workspace_id=a.workspace_id AND v.id=a.service_id WHERE a.workspace_id=$1 AND a.id=$2`, a.WorkspaceID, a.ID, input.Service.Revision).Scan(&allowed)
+				if err == nil && allowed && purpose == "triage" {
+					fresh, checkErr := s.buildTriageInput(callCtx, s.pool, a.WorkspaceID, batchID, p)
+					allowed = checkErr == nil && fresh.Digest == digest
+				}
 				if err != nil || !allowed {
 					stop()
 					return
@@ -154,7 +180,11 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 	if e == nil && allowed {
 		// Rebuild from verified evidence so dispatch uses the exact compact bytes
 		// measured at admission, not PostgreSQL's JSONB serialization.
-		result = s.aiClient.Analyze(callCtx, p.Kind, model, string(key), input.Payload)
+		if ai.IsTriage(purpose) {
+			result = s.aiClient.Triage(callCtx, p.Kind, model, string(key), input.Payload)
+		} else {
+			result = s.aiClient.Analyze(callCtx, p.Kind, model, string(key), input.Payload)
+		}
 	} else if e != nil {
 		result = ai.Result{State: "unknown", Reason: "Could not verify dispatch state; reservation retained."}
 	}
@@ -167,6 +197,9 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 		return e
 	}
 	defer finalTx.Rollback(finishCtx)
+	if e = lockAIExecutionScope(finishCtx, finalTx, a.WorkspaceID, serviceID, batchID); e != nil {
+		return e
+	}
 	if e = aiWorkspaceLock(finishCtx, finalTx, a.WorkspaceID); e != nil {
 		return e
 	}
@@ -181,33 +214,45 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 		result.Reason = "Processing cancelled; transmitted requests may still incur charges."
 	} else {
 		freshP, err := loadAIProvider(finishCtx, finalTx, a.WorkspaceID, providerID)
+		if ai.IsTriage(purpose) {
+			freshP = triageProvider(freshP)
+		}
 		freshPolicy, errPolicy := loadAIPolicy(finishCtx, finalTx, a.WorkspaceID)
 		valid := err == nil && errPolicy == nil && freshPolicy.Enabled && freshPolicy.Revision == policyRev && freshP.Enabled && freshP.Revision == providerRev
 		if valid {
-			fresh, err := s.buildAIInput(finishCtx, finalTx, a.WorkspaceID, runID, freshP)
-			valid = err == nil && fresh.Digest == digest && fresh.Expires.After(time.Now()) && (purpose == "test" || aiAllowed(freshP, input.Service.ID, input.Service.Origin))
+			fresh, err := s.invocationInput(finishCtx, finalTx, a.WorkspaceID, runID, batchID, purpose, freshP)
+			valid = err == nil && fresh.Digest == digest && fresh.Expires.After(time.Now()) && (purpose == "test" || purpose == "triage_test" || aiAllowed(freshP, input.Service.ID, input.Service.Origin))
 		}
 		if !valid {
 			result.State = "cancelled"
 			result.Reason = "Evidence or release policy changed; generated content withheld."
 		} else if result.State == "completed" {
-			doc, err := ai.Validate(result.Text, input.IDs, input.Service.Mapping.SensitivePatterns)
+			var doc any
+			var err error
+			if ai.IsTriage(purpose) {
+				doc, err = ai.ValidateTriage(result.Text, input.IDs, input.Service.Mapping.SensitivePatterns)
+			} else {
+				doc, err = ai.Validate(result.Text, input.IDs, input.Service.Mapping.SensitivePatterns)
+			}
 			if err != nil {
 				result.State = "fallback"
 				result.Reason = err.Error()
 			} else {
 				report, _ = json.Marshal(doc)
 				result.Reason = "AI suggestions validated for structure and evidence scope; causal claims still require review."
+				if ai.IsTriage(purpose) {
+					result.Reason = "Advisory assessment validated for structure and evidence scope; investigations remain manual."
+				}
 			}
 		}
 	}
-	if result.UsageKnown && (result.Input > int64(inputBound) || result.Output > ai.OutputLimit) {
+	if result.UsageKnown && (result.Input > int64(inputBound) || result.Output > int64(outputLimit)) {
 		report = nil
 		if current == "analyzing" {
 			result.State = "fallback"
 		}
 		result.Reason = "Provider usage exceeded the admission estimate/ceiling. Recheck this model configuration before further use."
-		_, e = finalTx.Exec(finishCtx, `UPDATE ai_providers SET capability='failed' WHERE workspace_id=$1 AND id=$2 AND revision=$3`, a.WorkspaceID, providerID, providerRev)
+		_, e = finalTx.Exec(finishCtx, `UPDATE ai_providers SET capability=CASE WHEN $4 THEN capability ELSE 'failed' END,triage_capability=CASE WHEN $4 THEN 'failed' ELSE triage_capability END WHERE workspace_id=$1 AND id=$2 AND revision=$3`, a.WorkspaceID, providerID, providerRev, ai.IsTriage(purpose))
 		if e != nil {
 			return e
 		}
@@ -222,12 +267,12 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 		outTokens = result.Output
 	}
 	_, e = finalTx.Exec(finishCtx, `UPDATE ai_runs SET state=$3,reason=$4,report=$5,payload=NULL,finished_at=now(),accounting=$6,charged=$7,input_tokens=$8,output_tokens=$9,request_id=$10 WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.ID, result.State, result.Reason, report, accounting, charged, inTokens, outTokens, result.RequestID)
-	if e == nil && purpose == "test" {
+	if e == nil && (purpose == "test" || purpose == "triage_test") {
 		capability := "failed"
 		if result.State == "completed" {
 			capability = "ready"
 		}
-		_, e = finalTx.Exec(finishCtx, `UPDATE ai_providers SET capability=$4 WHERE workspace_id=$1 AND id=$2 AND revision=$3 AND NOT deleted`, a.WorkspaceID, providerID, providerRev, capability)
+		_, e = finalTx.Exec(finishCtx, `UPDATE ai_providers SET capability=CASE WHEN $5 THEN capability ELSE $4 END,triage_capability=CASE WHEN $5 THEN $4 ELSE triage_capability END WHERE workspace_id=$1 AND id=$2 AND revision=$3 AND NOT deleted`, a.WorkspaceID, providerID, providerRev, capability, purpose == "triage_test")
 	}
 	if e == nil {
 		e = finalTx.Commit(finishCtx)

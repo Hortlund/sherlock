@@ -2055,6 +2055,52 @@ paths:
             },
         },
     }
+  /api/v1/ai/providers/{id}/triage-test:
+    {
+      "post":
+        {
+          "summary": "Reserve and queue one explicitly confirmed synthetic triage capability test (15 seconds, 1000 output tokens)",
+          "parameters":
+            [
+              { "$ref": "#/components/parameters/CSRF" },
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string", "format": "uuid" },
+              },
+            ],
+          "responses":
+            {
+              "202":
+                {
+                  "description": "Reserve and queue one explicitly confirmed synthetic triage capability test (15 seconds, 1000 output tokens)",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/AIAdmission" },
+                        },
+                    },
+                },
+              "401": { "$ref": "#/components/responses/Error" },
+              "403": { "$ref": "#/components/responses/Error" },
+              "400": { "$ref": "#/components/responses/Error" },
+              "404": { "$ref": "#/components/responses/Error" },
+              "409": { "$ref": "#/components/responses/Error" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    { "schema": { "$ref": "#/components/schemas/AIStart" } },
+                },
+            },
+        },
+    }
   /api/v1/investigations/{id}/ai/preview:
     {
       "post":
@@ -2387,6 +2433,33 @@ paths:
         },
     }
 
+  /api/v1/ai/providers/{id}/triage-preview:
+    post:
+      summary: Preview the exact synthetic triage request without sending data
+      parameters:
+        - { $ref: '#/components/parameters/CSRF' }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Bounded request sample; no external call
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payload: { type: object }
+                  sends_data: { type: boolean, const: false }
+                  input_bound: { type: integer, maximum: 4000 }
+                  output_limit: { type: integer, const: 1000 }
+                  reservation: { type: integer, description: Estimated micro-USD for the synthetic sample }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/automation/policy:
     get:
       summary: Read local recommendation policy (default Off)
@@ -2477,7 +2550,11 @@ components:
         mode:
           type: string
           enum: ['off', triage_only]
-          description: triage_only currently means local rules and manual investigation recommendations; no AI triage or automatic runs.
+          description: Local recommendations with optional advisory AI triage; investigations remain manual.
+        triage_provider_id:
+          type: string
+          default: ""
+          description: Empty disables AI triage. A provider ID explicitly opts into recurring calls after local recommendation gates, subject to tested triage capability, service consent and shared AI budgets.
         services:
           type: array
           maxItems: 100
@@ -2497,10 +2574,39 @@ components:
         comparison_key: { type: string }
         severity: { type: string }
         minimum_delta: { type: number, minimum: 0 }
+    TriageDecision:
+      type: object
+      additionalProperties: false
+      required: [decision, reason, evidence_ids]
+      properties:
+        decision: { type: string, enum: [investigate, observe, needs_attention, need_more_data] }
+        reason: { type: string }
+        evidence_ids:
+          type: array
+          minItems: 1
+          maxItems: 12
+          uniqueItems: true
+          items: { type: string }
+    TriageActivity:
+      type: object
+      properties:
+        status: { type: string, description: 'off, queued, analyzing, cached, unavailable, or the terminal AI state' }
+        reason: { type: string }
+        run_id: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        provider: { type: [string, 'null'] }
+        accounting: { type: [string, 'null'] }
+        reserved: { type: [integer, 'null'], description: Micro-USD }
+        charged: { type: [integer, 'null'], description: Micro-USD }
+        report:
+          anyOf:
+            - { $ref: '#/components/schemas/TriageDecision' }
+            - { type: 'null' }
     AutomationActivity:
       type: object
       required: [id, service_id, service_name, origin, state, reason, policy_revision, mapping_revision, created_at, due_at, evaluated_at, next_eligible_at, items]
       properties:
+        triage: { $ref: '#/components/schemas/TriageActivity' }
         id: { type: string, format: uuid }
         service_id: { type: string, format: uuid }
         service_name: { type: string }
@@ -3067,6 +3173,10 @@ components:
           {
             "id": { "type": "string", "format": "uuid", "readOnly": true },
             "kind": { "type": "string", "enum": ["openai", "anthropic"] },
+            "triage_model": { "type": "string", "maxLength": 120, "description": "Optional separate triage model; empty leaves triage unconfigured." },
+            "triage_input_price": { "type": "integer", "minimum": 0, "maximum": 10000000000, "description": "Micro-USD per million tokens; positive when triage_model is configured." },
+            "triage_output_price": { "type": "integer", "minimum": 0, "maximum": 10000000000 },
+            "triage_capability": { "type": "string", "readOnly": true, "enum": ["untested", "ready", "failed"] },
             "model":
               {
                 "type": "string",
@@ -3333,7 +3443,7 @@ components:
             "provider_id": { "type": "string", "format": "uuid" },
             "investigation_id": { "type": "string" },
             "service_id": { "type": "string" },
-            "purpose": { "enum": ["test", "analysis"] },
+            "purpose": { "enum": ["test", "analysis", "triage_test", "triage"] },
             "model": { "type": "string" },
             "origin": { "enum": ["live", "demo"] },
             "state":
@@ -3381,6 +3491,7 @@ components:
                 "anyOf":
                   [
                     { "$ref": "#/components/schemas/AIReport" },
+                    { "$ref": "#/components/schemas/TriageDecision" },
                     { "type": "null" },
                   ],
               },

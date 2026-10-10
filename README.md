@@ -6,7 +6,7 @@ Sherlock is a self-hosted investigation tool for developers and operators runnin
 
 Connect your existing telemetry, map a service, and investigate a finding. Add **OpenAI or Anthropic** for optional AI analysis, and send alerts to **Slack, Discord, or a webhook receiver**.
 
-**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations. Automatic AI runs, multi-step investigations, and inbound alert triggers are on the roadmap. The current installation supports one administrator and one workspace.
+**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations with optional AI triage. Automatic AI runs, multi-step investigations, and inbound alert triggers are on the roadmap. The current installation supports one administrator and one workspace.
 
 ## From signals to next steps
 
@@ -84,7 +84,8 @@ The next steps build on the same evidence, privacy, and budget controls. These a
 | Outbound notifications | Implemented · Phase 2 A | Slack, Discord, signed webhooks, routing filters, quiet hours, retries, and delivery history. |
 | Reactive AI analysis | Implemented · Phase 2 B | OpenAI/Anthropic setup, payload previews, manual analysis, evidence references, usage tracking, cancellation, and budgets. |
 | Proactive rules and activity | Implemented · First part of Phase 2 C | Local investigation recommendations, selected services, 60-second grouping, persistent cooldowns and an activity history that explains recommendations and skips. |
-| Decision models and automatic investigation | Next · Remaining Phase 2 C | Optional AI triage and explicitly enabled automatic analysis within privacy, budget and concurrency limits. |
+| AI triage | Implemented · Phase 2 C | Optional OpenAI/Anthropic assessments, separate model roles, bounded spend and reusable decisions. Investigations remain manual. |
+| Automatic investigation | Next · Remaining Phase 2 C | Explicitly enabled automatic analysis within privacy, budget and concurrency limits; optional OpenAI Decisions adapter. |
 | Investigation tools and follow-up | Planned · Phase 2 D | Let AI request approved, bounded, read-only telemetry lookups across multiple steps, then support follow-up questions with cumulative cost and time limits. |
 | Inbound alert triggers | Planned · Phase 2 E | Accept signed alerts from external systems, prevent replay/duplicates, and start investigations within administrator-configured service boundaries. |
 
