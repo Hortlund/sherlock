@@ -1,21 +1,110 @@
 # Sherlock
 
-Self-hosted reliability investigations. Go API and workers, React/TypeScript UI, PostgreSQL persistence. The active build contract is [SPEC v1.2](INFRA_SHERLOCK_CODEX_KIT/SPEC.md); [progress](docs/progress.md) records what actually works.
+**Follow the evidence. Understand what changed.**
 
-## Run locally
+Sherlock is a self-hosted investigation tool for developers and operators running services with **Prometheus and Loki**. It detects changes in your metrics and logs, collects the supporting evidence, and turns it into a report you can inspect: what happened, what remains unknown, and what to check next.
 
-Requires Docker Compose and Go 1.26+ for the one-time secret generator.
+Connect your existing telemetry, map a service, and investigate a finding. Add **OpenAI or Anthropic** for optional AI analysis, and send alerts to **Slack, Discord, or a webhook receiver**.
+
+**Status:** Working MVP with outbound notifications and manually requested AI analysis. Proactive AI, multi-step investigations, and inbound alert triggers are on the roadmap. The current installation supports one administrator and one workspace.
+
+## From signals to next steps
+
+- **Spot changes.** Find new exception patterns, warning bursts, and increases in error rate by comparing recent activity with an earlier window.
+- **Inspect the evidence.** Inspect the observations, timestamps, coverage, and stored evidence behind a finding.
+- **Choose the next check.** Read suggested manual checks, or request AI hypotheses grounded in the collected evidence.
+- **Keep your team informed.** Route factual notifications to your chosen destinations with service/severity filters and quiet hours.
+
+For example, a checkout service starts logging connection-acquisition timeouts while its error rate rises. Sherlock can detect the change, collect the relevant signals, and show them together in an investigation. An AI analysis can suggest explanations and checks. A database failure or an exhausted connection pool remains a hypothesis until the evidence supports it.
+
+## How it works today
+
+1. **Connect Prometheus, Loki, or both.** Test access and map source labels and metrics to a service. Each source can be used independently; missing signals are reported explicitly.
+2. **Scan your services.** Run a scan manually or enable scheduled monitoring. Three rule-based detectors look for new exception patterns, warning bursts, and error-rate regressions.
+3. **Investigate a finding.** Collect a bounded incident window and comparison data, then inspect a persistent report with observations, evidence links, unknowns, and manual checks.
+4. **Ask for AI analysis when useful.** Choose a configured OpenAI or Anthropic provider, preview the outgoing payload, and explicitly send it. The AI report appears alongside the rule-based report, with evidence references and usage history.
+5. **Manage the finding and notify your team.** Acknowledge, snooze, dismiss, or resolve findings. Configured notification rules send qualifying events to Slack, Discord, or signed generic webhooks.
+
+Detection, rule-based reports, and notifications work without AI credentials. AI currently analyzes evidence already collected by an investigation; each run makes at most one bounded provider request.
+
+## Built for controlled investigations
+
+- **Read-only telemetry access.** Sherlock queries your sources. Production remediation, shell commands, and infrastructure changes are outside the current scope.
+- **Explicit AI data sharing.** Enable processing per workspace, provider, and service. Preview the request before sending; log excerpts require additional opt-in. Only the approved payload goes to the configured provider.
+- **Bounded work and spending.** Collection and AI calls have request/time limits. AI admission uses daily and per-run budgets, with recorded usage and reconciliation for uncertain charges. Provider invoices can differ from configured estimates.
+- **Durable background work.** PostgreSQL and River persist jobs and delivery history. Notification retries are bounded; an ambiguous AI response is recorded without automatically repeating the paid call.
+- **Inspectable results.** Missing evidence, failed calls, and insufficient signal remain visible. AI citations identify supporting evidence; they do not prove a hypothesis.
+
+API keys and destination secrets are encrypted at rest. See [AI data handling and accounting](docs/ai.md), [notification behavior](docs/notifications.md), and [operations](docs/operations.md) for the details.
+
+## Try it locally
+
+Requires **Docker with Compose**, **Go 1.26+** for the one-time secret generator, and `make`.
 
 ```sh
+git clone https://github.com/Hortlund/sherlock.git
+cd sherlock
 make setup
+make demo
+```
+
+Open [localhost:8080](http://localhost:8080). Enter `SHERLOCK_SETUP_TOKEN` from the generated `.env` file, then choose your administrator email and password.
+
+In the app:
+
+1. Open **Connections → Try the synthetic demo**.
+2. Go to **Services → Run scan**.
+3. Review the findings and click **Investigate** to inspect the evidence and report.
+
+The demo uses simulated telemetry through the real collectors, database, and job queue. It needs no cloud credentials. AI calls and external notifications require separate configuration and explicit permission to send demo data.
+
+To run without the demo source:
+
+```sh
 docker compose up --build -d --wait
 ```
 
-Open [http://localhost:8080](http://localhost:8080). Enter `SHERLOCK_SETUP_TOKEN` from your local `.env` file and choose your administrator email/password. The token is intentionally not printed. `.env` is created with mode 0600 and excluded from Git and Docker build context. Keep a secure backup: the encryption key is required to reopen this installation. `make setup` refuses to replace an existing file.
+`make setup` creates fresh secrets in `.env`, excludes them from Git, and refuses to overwrite an existing installation. Keep a secure backup of that file: its encryption key is required to decrypt stored credentials. `make down` stops the app while preserving the database volume.
 
-Compose publishes only the application on loopback. PostgreSQL uses a persistent Docker volume and has no published port. `make down` stops containers while preserving data. Do not remove the volume unless you intend to discard the installation.
+### Connect your own stack
 
-For another local port, change both `SHERLOCK_PORT` and `SHERLOCK_ORIGIN` in `.env`. For remote use, terminate HTTPS at a trusted reverse proxy and set the exact public `SHERLOCK_ORIGIN`; the application enables Secure cookies for HTTPS. Do not expose the default HTTP development installation publicly. Forwarded client-IP headers are deliberately not trusted; authentication throttling counts the proxy as a single peer.
+Add and test a Prometheus or Loki connection, map the service's labels and request counter or log patterns, and preview the mapping. Then run a scan or enable scheduled monitoring. By default, scans compare the latest 15 minutes with the preceding 60 minutes every five minutes.
+
+Configure **Settings → Notifications** for outbound alerts and **Settings → AI providers** for optional analysis. AI setup requires your own API key, model ID, prices, budget, and allowed services; run the synthetic capability test before analyzing an investigation.
+
+The default app is available only on loopback, and PostgreSQL has no published port. Remote access requires HTTPS through a trusted reverse proxy and an exact `SHERLOCK_ORIGIN`. See the [deployment and backup guide](docs/operations.md) before exposing an installation.
+
+## Roadmap
+
+The next steps build on the same evidence, privacy, and budget controls. These are ordered milestones, not release-date commitments.
+
+| Milestone | Status | What it delivers |
+| --- | --- | --- |
+| Evidence-first foundation | Implemented | Prometheus/Loki connections, service mapping, scheduled scans, three detectors, finding lifecycle, and rule-based investigation reports. |
+| Outbound notifications | Implemented · Phase 2 A | Slack, Discord, signed webhooks, routing filters, quiet hours, retries, and delivery history. |
+| Reactive AI analysis | Implemented · Phase 2 B | OpenAI/Anthropic setup, payload previews, manual analysis, evidence references, usage tracking, cancellation, and budgets. |
+| Proactive triage and decision policies | Next · Phase 2 C | Evaluate meaningful changes, recommend whether to investigate, and optionally start analysis within configured rules. Coalescing and cooldowns limit repeated work. Required factual alerts remain independent of AI decisions. |
+| Investigation tools and follow-up | Planned · Phase 2 D | Let AI request approved, bounded, read-only telemetry lookups across multiple steps, then support follow-up questions with cumulative cost and time limits. |
+| Inbound alert triggers | Planned · Phase 2 E | Accept signed alerts from external systems, prevent replay/duplicates, and start investigations within administrator-configured service boundaries. |
+
+Longer-term ideas include Grafana discovery, Kubernetes and trace context, additional detectors, and broader user/workspace support. These are deferred beyond the current delivery plan. Automatic remediation and two-way chat bots are also outside the current scope.
+
+Local tests cover the delivered features using provider/delivery fixtures, alongside real local Prometheus/Loki checks. Live OpenAI/Anthropic and Slack/Discord account checks remain deployment validation; AI usefulness and unattended behavior still need scenario evaluations.
+
+See the [detailed implementation plan](docs/phase2-plan.md) for acceptance criteria and [progress log](docs/progress.md) for completed checks and known limits.
+
+## Stack and architecture
+
+Sherlock runs as a modular monolith: one Go application serves the API, background workers, and compiled React UI. PostgreSQL stores application state, evidence, and durable jobs.
+
+| Layer | Technology |
+| --- | --- |
+| API and workers | Go, `net/http`, River |
+| Interface | React, TypeScript, Vite, TanStack Query |
+| Storage | PostgreSQL, `pgx`, `sqlc`, versioned SQL migrations |
+| Telemetry | Direct Prometheus and Loki HTTP APIs |
+| Optional AI | OpenAI Responses and Anthropic Messages APIs |
+| Deployment | Docker Compose: app + PostgreSQL, with an optional demo source |
 
 ## Development and checks
 
@@ -26,47 +115,23 @@ make lint
 make test
 cd web && npx playwright install chromium && cd ..
 make e2e
-```
-
-`make test` runs Go race-enabled unit tests and PostgreSQL integration tests. The disposable test database uses `compose.test.yaml`, loopback port 55432, and memory-backed storage. Integration tests create their own schemas. E2E tests use a fresh schema and server on port 18080 and clean them up afterward. They never bootstrap or modify the installation on port 8080. Stop the test database with `docker compose -f compose.test.yaml down`.
-
-For local Go development, export `DATABASE_URL`, `SHERLOCK_ENCRYPTION_KEY`, `SHERLOCK_SETUP_TOKEN`, and `SHERLOCK_ORIGIN`, then run `make dev`. The default web directory is `web/dist`. For Vite hot reload, run `npm run dev --prefix web` in a second terminal and set the Go server's origin to `http://127.0.0.1:5173`; visit that exact address. Vite proxies API requests to the Go server on port 8080.
-
-`make generate` regenerates typed SQL access using pinned sqlc. Commit generated queries alongside the source SQL. Migrations apply transactionally under an advisory lock and verify recorded checksums. Never edit an applied migration; add a new one.
-
-## Delivered MVP
-
-- One-time token-protected admin setup; the database enforces a single administrator/workspace.
-- Argon2id passwords, opaque hashed sessions with 12-hour expiry, cookie rotation on login, and session revocation on logout/password change.
-- Exact-origin checks on mutations, session-bound CSRF tokens, request size limits, and PostgreSQL-backed authentication throttling.
-- AES-GCM secret encryption bound to record scope; startup refuses a changed encryption key.
-- Health/readiness endpoints, non-root application container, structured sanitized logs, and persistent security audit events.
-
-Public API exceptions are health/readiness, static UI assets, initialization status (a boolean only), rate-limited login, and token-protected bootstrap. All workspace data is authenticated. See [OpenAPI](docs/openapi.yaml) for implemented routes.
-
-
-## Try the complete demo
-
-```sh
-make demo
-```
-
-After setup, open **Connections → Try the synthetic demo**, then **Services → Run scan**. Review the two findings and click **Investigate** to collect a fresh report. Demo telemetry passes through the same HTTP adapters, database, queue, rules, and report validation as live data. It is visibly marked Simulated. It never inserts finished findings or reports directly.
-
-For real sources, add/test a connection, choose exact service labels, configure the request counter/error labels or log severity patterns, and preview. Enable scheduled monitoring in the mapping editor, or run manual scans. Default scans compare 15 minutes with the preceding 60 minutes every five minutes. Investigations default to a 30-minute incident window, plus comparison context. Missing, sparse, stale or capped observations abstain instead of claiming health. The MVP has three deterministic detectors and no AI dependencies or production write actions.
-
-Findings support acknowledgement, snooze, manual resolution/dismissal, recurrence cooldown and usefulness feedback. Reports persist observations, citations, unknowns and manual checks. Progress uses authenticated polling with replayable event IDs. Settings exposes detector thresholds, cadence/windows, retention, password changes and system health.
-
-See [operations](docs/operations.md) for explicit private-network allowlists, query/coverage bounds, credential deletion, evidence expiry, backup/restore, key rotation and release checks. The [original specification](INFRA_SHERLOCK_CODEX_KIT/reference/v1.0/SPEC.md) remains unchanged.
-
-```sh
 make real-sources
 ```
 
-This additional check starts disposable real Prometheus and Loki containers, seeds bounded synthetic telemetry, verifies actual query semantics and removes its own test volumes. It is distinct from the lightweight demo fixture server.
+`make test` runs race-enabled Go checks and PostgreSQL integration tests. The disposable test database uses loopback port 55432 and memory-backed storage. Browser tests run an isolated installation on port 18080; they do not modify the app on port 8080. `make real-sources` checks the adapters against disposable Prometheus and Loki containers. Stop the test database with `docker compose -f compose.test.yaml down`.
 
-## Phase 2: notifications and AI analysis
+For local Go development, export `DATABASE_URL`, `SHERLOCK_ENCRYPTION_KEY`, `SHERLOCK_SETUP_TOKEN`, and `SHERLOCK_ORIGIN`, then run `make dev`. The default web directory is `web/dist`. For Vite hot reload, run `npm run dev --prefix web` separately and set the Go server's origin to `http://127.0.0.1:5173`; visit that exact address. Vite proxies API requests to the Go server on port 8080.
 
-[Phase 2](docs/phase2-plan.md) starts with outbound notifications. **Settings → Notifications** supports Slack, Discord, and signed generic webhooks, including filters, quiet hours, previews, test sends, retries, and delivery history. Demo alerts require explicit opt-in. See [notification setup and receiver signing](docs/notifications.md).
+`make generate` regenerates typed SQL access using pinned sqlc. Commit generated queries alongside their source SQL. Add a new migration for schema changes; applied migrations have verified checksums and must remain unchanged.
 
-**Settings → AI providers** supports OpenAI and Anthropic with encrypted keys, explicit service consent, budgets and synthetic capability tests. A completed investigation offers **Investigate with AI → Preview AI payload → Send to AI provider**, with citations, usage, cancellation and a deterministic fallback. See [AI setup and accounting](docs/ai.md). Decision-model triage, proactive work, tools/follow-up and inbound alert triggers remain planned. Notifications and the deterministic demo work without AI credentials. The [v1.1 spec](INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) remains archived unchanged.
+## Documentation
+
+- [Product specification](INFRA_SHERLOCK_CODEX_KIT/SPEC.md) — active scope and behavior.
+- [Roadmap and acceptance criteria](docs/phase2-plan.md) — implementation order and planned work.
+- [Progress and verification](docs/progress.md) — what has actually been built and tested.
+- [AI setup and accounting](docs/ai.md) — provider configuration, data release, limits, and usage.
+- [Notifications](docs/notifications.md) — destination setup and webhook signing.
+- [Operations](docs/operations.md) — deployment, network access, retention, backups, and key rotation.
+- [OpenAPI](docs/openapi.yaml) — implemented HTTP API.
+- [Architecture decisions](docs/decisions.md) — implementation choices and tradeoffs.
+- [Archived specifications](INFRA_SHERLOCK_CODEX_KIT/reference/README.md) — the original vision and earlier MVP scope, preserved for reference.
