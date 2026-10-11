@@ -1,7 +1,7 @@
 # Infra Sherlock — Product Specification
 
 **Version:** 1.2 (AI and notification planning revision, 2026-10-10)  
-**Status:** Deterministic MVP delivered; Phase 2 outbound notifications and reactive OpenAI/Anthropic analysis (Slices A/B) implemented and locally verified. Slice C now includes local proactive recommendations and history. Optional OpenAI/Anthropic advisory triage is implemented. Opt-in automatic investigation admission is implemented; tools/follow-up and inbound triggers remain planned. See project `docs/progress.md` for actual verification.
+**Status:** Deterministic MVP delivered; Phase 2 outbound notifications and reactive OpenAI/Anthropic analysis (Slices A/B) implemented and locally verified. Slice C now includes local proactive recommendations and history. Optional OpenAI/Anthropic advisory triage is implemented. Opt-in automatic investigation admission is implemented; Slice D bounded tools/scoped follow-up is implemented; inbound triggers remain planned. See project `docs/progress.md` for actual verification.
 **Stack:** Go backend, React/TypeScript frontend, PostgreSQL  
 **Product:** Self-hosted reliability investigations backed by observable evidence
 
@@ -409,7 +409,7 @@ Do not let AI dismiss, resolve, snooze, lower deterministic severity, or suppres
 
 ### Reactive work
 
-Add **Investigate with AI** alongside the existing deterministic investigation. Initially analyze an immutable evidence snapshot and deterministic report. Subsequent implementation adds a bounded tool loop and scoped report follow-up. A manual request can bypass the proactive change/cooldown gate, but never privacy, source, deadline, or budget checks.
+Add **Investigate with AI** alongside the existing deterministic investigation. Initially analyze an immutable evidence snapshot and deterministic report. Slice D adds the explicit bounded tool loop and scoped report follow-up described below. A manual request can bypass the proactive change/cooldown gate, but never privacy, source, deadline, or budget checks.
 
 An AI run has its own persisted state: `queued → analyzing → collecting → analyzing → reporting → completed`, with explicit `insufficient_evidence`, `budget_exhausted`, `cancelled`, and `failed` outcomes. The collecting/analyzing cycle may repeat only within limits. Keep the existing deterministic report available when enrichment fails. Persist monotonically ordered step events; do not reuse the existing unique `(run_id, stage)` constraint for repeated AI stages.
 
@@ -428,6 +428,10 @@ A material change initially means a new occurrence, deterministic severity chang
 Default to one automatic deep investigation per service per 30 minutes, one active AI run per service, and no automatic replay of a backlog when automation is enabled. These are proposed starting limits, adjustable within server caps. Save the last triaged measurement and cooldown durably. Unchanged snapshots reuse validated results; a user can request fresh analysis explicitly. Recheck service mapping, monitoring, policy, finding state, and destination eligibility at dispatch boundaries.
 
 Proactive behavior in this phase means investigating detector-backed emerging symptoms. It does not claim to predict failures from unavailable traces, deployment history, or Kubernetes data.
+
+### Delivered Slice D implementation
+
+Approved evidence/Prometheus/Loki tools and scoped follow-up now use persisted ordered AI steps, separate provider/tool queues, per-step admission, cumulative budgets and no uncertain paid replay. The original deterministic report/event contract remains intact; collecting appears in ordered tool steps while the parent AI run stays active. Manual tool use is explicit and automatic tools require an additional default-false policy checkbox. Follow-up uses at most three recent question/answer summaries and expires within 24 hours/source expiry. The delivered wall deadline is 180 seconds from enqueue, stricter than the proposal below. See [AI operations](../docs/ai.md#bounded-tools-and-scoped-follow-up-slice-d) and [verification](../docs/progress.md).
 
 ## 17. Efficiency, budgets, and durable execution
 
@@ -502,4 +506,4 @@ Acceptance requires existing foundation tests plus: provider contract fixtures f
 
 Maintain a versioned evaluation set covering the demo, healthy noise, insufficient data, overlapping incidents, contradictory evidence, and malicious log instructions. Require all deterministic safety/contract assertions to pass and compare AI report claims with labeled facts. Record usefulness and cost measurements before choosing default model IDs. Fixture success is not live provider certification: each enabled provider and notification adapter needs a documented, bounded live smoke test using user-supplied credentials and an explicitly selected test destination before release. No credentials or external test messages are required for this planning task.
 
-Phase 2 Slices **A/B are implemented and locally verified with fixtures**; local recommendations/history from C are also delivered, with advisory OpenAI/Anthropic triage and opt-in automatic admission delivered; D–E remain planned. The [implementation plan](../docs/phase2-plan.md) defines ordered slices and acceptance gates. Existing no-AI demo behavior remains the baseline throughout implementation.
+Phase 2 Slices **A/B are implemented and locally verified with fixtures**; local recommendations/history from C are also delivered, with advisory OpenAI/Anthropic triage and opt-in automatic admission delivered; Slice D bounded tools/follow-up is implemented and E remains planned. The [implementation plan](../docs/phase2-plan.md) defines ordered slices and acceptance gates. Existing no-AI demo behavior remains the baseline throughout implementation.

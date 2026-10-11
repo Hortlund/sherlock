@@ -45,7 +45,7 @@ type aiInput struct {
 	Bound   int
 }
 
-func (s *Server) buildAIInput(ctx context.Context, q aiDB, ws, runID string, p AIProvider) (aiInput, error) {
+func (s *Server) buildAIInput(ctx context.Context, q aiDB, ws, runID string, p AIProvider, extra ...string) (aiInput, error) {
 	out := aiInput{Expires: time.Now().Add(24 * time.Hour), IDs: []string{}}
 	payload := aiPayload{Version: ai.PromptVersion, Origin: "demo", Evidence: []aiFact{}, Limitations: []string{"No dependency health, traces, deployment history, database or pool instrumentation is available. Causality is unverified."}}
 	if runID == "" {
@@ -76,6 +76,19 @@ func (s *Server) buildAIInput(ctx context.Context, q aiDB, ws, runID string, p A
 		}
 		if len(run.Result.EvidenceIDs) == 0 || len(run.Result.EvidenceIDs) > 12 {
 			return out, errors.New("No bounded evidence set is available.")
+		}
+		seen := map[string]bool{}
+		for _, id := range run.Result.EvidenceIDs {
+			seen[id] = true
+		}
+		for _, id := range extra {
+			if !seen[id] {
+				run.Result.EvidenceIDs = append(run.Result.EvidenceIDs, id)
+				seen[id] = true
+			}
+		}
+		if len(run.Result.EvidenceIDs) > 48 {
+			return out, errors.New("Evidence context limit reached.")
 		}
 		verified := []investigations.Evidence{}
 		out.Expires = time.Now().Add(time.Duration(cfg.RetentionDays) * 24 * time.Hour)

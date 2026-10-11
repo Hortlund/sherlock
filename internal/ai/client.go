@@ -29,9 +29,15 @@ type Result struct {
 var safeRequestID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
 
 func RequestBody(kind, model string, payload json.RawMessage, purpose ...string) ([]byte, error) {
+	return requestBody(kind, model, payload, OutputLimit, purpose...)
+}
+func requestBody(kind, model string, payload json.RawMessage, ceiling int, purpose ...string) ([]byte, error) {
 	instructions, name, schema, output := Instructions, "sherlock_analysis", Schema(), OutputLimit
 	if len(purpose) > 0 && IsTriage(purpose[0]) {
 		instructions, name, schema, output = TriageInstructions, "sherlock_triage", TriageSchema(), TriageOutputLimit
+	}
+	if len(purpose) > 0 && purpose[0] == "exploration" {
+		instructions, name, schema, output = ExplorationInstructions, "sherlock_exploration", ExplorationSchema(), ceiling
 	}
 	if kind == "openai" {
 		return json.Marshal(map[string]any{"model": model, "store": false, "max_output_tokens": output, "instructions": instructions, "input": string(payload), "text": map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": schema}}})
@@ -43,12 +49,24 @@ func InputBound(kind, model string, payload json.RawMessage, purpose ...string) 
 	return len(b) + 1024, e
 }
 func (c *Client) Analyze(ctx context.Context, kind, model, key string, payload json.RawMessage, purpose ...string) Result {
+	return c.analyze(ctx, kind, model, key, payload, OutputLimit, purpose...)
+}
+func ExplorationBody(kind, model string, payload json.RawMessage, output int) ([]byte, error) {
+	return requestBody(kind, model, payload, output, "exploration")
+}
+func (c *Client) Explore(ctx context.Context, kind, model, key string, payload json.RawMessage, output int) Result {
+	if output < 1 || output > OutputLimit {
+		return Result{State: "failed", Reason: "Invalid output ceiling.", UsageKnown: true}
+	}
+	return c.analyze(ctx, kind, model, key, payload, output, "exploration")
+}
+func (c *Client) analyze(ctx context.Context, kind, model, key string, payload json.RawMessage, ceiling int, purpose ...string) Result {
 	out := Result{State: "unknown", Reason: "No complete acknowledgement. Provider charges may have occurred; reservation retained."}
 	limit := InputLimit
 	if len(purpose) > 0 {
 		limit, _ = Limits(purpose[0])
 	}
-	body, e := RequestBody(kind, model, payload, purpose...)
+	body, e := requestBody(kind, model, payload, ceiling, purpose...)
 	if e != nil || len(body)+1024 > limit {
 		out.State = "failed"
 		out.Reason = "Input exceeds the bounded analysis context."

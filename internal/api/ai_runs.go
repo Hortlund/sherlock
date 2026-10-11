@@ -13,6 +13,9 @@ import (
 )
 
 type aiStart struct {
+	Tools      bool   `json:"tools"`
+	Parent     string `json:"parent_ai_run_id"`
+	Question   string `json:"question"`
 	ProviderID string `json:"provider_id"`
 	Confirm    bool   `json:"confirm"`
 	Digest     string `json:"preview_digest"`
@@ -22,6 +25,10 @@ type aiStart struct {
 func (s *Server) previewAI(w http.ResponseWriter, r *http.Request) {
 	var in aiStart
 	if !s.decode(w, r, &in) {
+		return
+	}
+	if in.Tools || in.Parent != "" || in.Question != "" {
+		s.deepRequest(w, r, in, true)
 		return
 	}
 	p, e := loadAIProvider(r.Context(), s.pool, workspace(r), in.ProviderID)
@@ -60,6 +67,10 @@ func (s *Server) startAITriageTest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startAIAnalysis(w http.ResponseWriter, r *http.Request) {
 	var in aiStart
 	if !s.decode(w, r, &in) {
+		return
+	}
+	if in.Tools || in.Parent != "" || in.Question != "" {
+		s.deepRequest(w, r, in, false)
 		return
 	}
 	s.enqueueAI(w, r, in, r.PathValue("id"))
@@ -133,7 +144,18 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 	// Completed automatic analysis has the same report contract as manual
 	// analysis. Reuse it under the same cache guards, without taking over active
 	// automatic work or changing its provenance and cancellation policy.
-	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND (purpose=$6 OR ($6='analysis' AND purpose='automatic' AND state='completed')) AND (state IN ('queued','analyzing') OR (state='completed' AND NOT $7 AND report IS NOT NULL AND expires_at>now())) ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, policy.Revision, input.Digest, purpose, in.Fresh || purpose == "test" || purpose == "triage_test").Scan(&existing)
+	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND (digest=$5 OR ($6='analysis' AND deep AND parent_ai_run_id IS NULL AND base_digest=$5 AND state='completed')) AND (purpose=$6 OR ($6='analysis' AND purpose='automatic' AND state='completed')) AND (state IN ('queued','analyzing') OR (state='completed' AND NOT $7 AND report IS NOT NULL AND expires_at>now())) ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, policy.Revision, input.Digest, purpose, in.Fresh || purpose == "test" || purpose == "triage_test").Scan(&existing)
+	if e == nil {
+		var deep bool
+		var ids []string
+		if e = tx.QueryRow(ctx, `SELECT deep,evidence_ids FROM ai_runs WHERE workspace_id=$1 AND id=$2`, ws, existing).Scan(&deep, &ids); e == nil && deep {
+			// A tool report may cite evidence beyond the original snapshot. Every one
+			// of those citations must still be retained and allowed before cache reuse.
+			if _, err := s.buildAIInput(ctx, tx, ws, runID, p, ids...); err != nil {
+				e = pgx.ErrNoRows
+			}
+		}
+	}
 	if e == nil {
 		s.json(w, 202, map[string]any{"id": existing, "reused": true})
 		return
@@ -185,7 +207,7 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 	s.json(w, 202, map[string]any{"id": id, "reused": false})
 }
 func (s *Server) listAIRuns(w http.ResponseWriter, r *http.Request) {
-	rows, e := s.pool.Query(r.Context(), `SELECT id::text,provider_id::text,COALESCE(run_id::text,''),COALESCE(service_id::text,''),purpose,model,origin,state,reason,reserved,charged,accounting,input_bound,output_limit,input_tokens,output_tokens,created_at,started_at,finished_at,expires_at,CASE WHEN expires_at>now() THEN report ELSE NULL END,request_id FROM ai_runs WHERE workspace_id=$1 AND ($2='' OR run_id::text=$2) AND ($3='' OR (created_at,id)<(SELECT c.created_at,c.id FROM ai_runs c WHERE c.workspace_id=$1 AND c.id::text=$3 AND ($2='' OR c.run_id::text=$2))) ORDER BY created_at DESC,id DESC LIMIT 51`, workspace(r), r.URL.Query().Get("investigation_id"), r.URL.Query().Get("cursor"))
+	rows, e := s.pool.Query(r.Context(), `SELECT id::text,provider_id::text,COALESCE(run_id::text,''),COALESCE(service_id::text,''),purpose,model,origin,state,reason,reserved,charged,accounting,input_bound,output_limit,input_tokens,output_tokens,created_at,started_at,finished_at,expires_at,CASE WHEN expires_at>now() THEN report ELSE NULL END,request_id,deep,tools_enabled,COALESCE(parent_ai_run_id::text,''),CASE WHEN expires_at>now() THEN COALESCE(question,'') ELSE '' END,telemetry_attempts FROM ai_runs WHERE workspace_id=$1 AND ($2='' OR run_id::text=$2) AND ($3='' OR (created_at,id)<(SELECT c.created_at,c.id FROM ai_runs c WHERE c.workspace_id=$1 AND c.id::text=$3 AND ($2='' OR c.run_id::text=$2))) ORDER BY created_at DESC,id DESC LIMIT 51`, workspace(r), r.URL.Query().Get("investigation_id"), r.URL.Query().Get("cursor"))
 	if e != nil {
 		s.internal(w, r, e)
 		return
@@ -195,12 +217,14 @@ func (s *Server) listAIRuns(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, pid, run, service, purpose, model, origin, state, reason, accounting, requestID string
 		var reserved, charged int64
-		var inputBound, outputLimit int
+		var inputBound, outputLimit, telemetryAttempts int
+		var deep, tools bool
+		var parent, question string
 		var input, output *int64
 		var created, expires time.Time
 		var started, finished *time.Time
 		var report []byte
-		e = rows.Scan(&id, &pid, &run, &service, &purpose, &model, &origin, &state, &reason, &reserved, &charged, &accounting, &inputBound, &outputLimit, &input, &output, &created, &started, &finished, &expires, &report, &requestID)
+		e = rows.Scan(&id, &pid, &run, &service, &purpose, &model, &origin, &state, &reason, &reserved, &charged, &accounting, &inputBound, &outputLimit, &input, &output, &created, &started, &finished, &expires, &report, &requestID, &deep, &tools, &parent, &question, &telemetryAttempts)
 		if e != nil {
 			s.internal(w, r, e)
 			return
@@ -209,7 +233,7 @@ func (s *Server) listAIRuns(w http.ResponseWriter, r *http.Request) {
 		if len(report) > 0 {
 			doc = json.RawMessage(report)
 		}
-		items = append(items, map[string]any{"id": id, "provider_id": pid, "investigation_id": run, "service_id": service, "purpose": purpose, "model": model, "origin": origin, "state": state, "reason": reason, "reserved": reserved, "charged": charged, "accounting": accounting, "input_bound": inputBound, "output_limit": outputLimit, "input_tokens": input, "output_tokens": output, "created_at": created, "started_at": started, "finished_at": finished, "expires_at": expires, "report": doc, "request_id": requestID})
+		items = append(items, map[string]any{"id": id, "provider_id": pid, "investigation_id": run, "service_id": service, "purpose": purpose, "model": model, "origin": origin, "state": state, "reason": reason, "reserved": reserved, "charged": charged, "accounting": accounting, "input_bound": inputBound, "output_limit": outputLimit, "input_tokens": input, "output_tokens": output, "created_at": created, "started_at": started, "finished_at": finished, "expires_at": expires, "report": doc, "request_id": requestID, "deep": deep, "tools": tools, "parent_ai_run_id": parent, "question": question, "telemetry_attempts": telemetryAttempts})
 	}
 	if e = rows.Err(); e != nil {
 		s.internal(w, r, e)
@@ -248,6 +272,9 @@ func (s *Server) changeAIContent(w http.ResponseWriter, r *http.Request, purge b
 		// sees cancel_requested; if admission wins we cancel its child here.
 		// Read batch links without locking/updating batches after accounting.
 		_, e = tx.Exec(ctx, `UPDATE ai_runs SET cancel_requested=true,state='cancelled',reason='Upstream triage was cancelled by administrator.',finished_at=now(),payload=NULL,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END WHERE workspace_id=$1 AND purpose='automatic' AND state IN ('queued','analyzing') AND automation_batch_id IN (SELECT id FROM automation_batches WHERE workspace_id=$1 AND ai_run_id::text=$2)`, ws, r.PathValue("id"))
+	}
+	if e == nil && purge {
+		_, e = tx.Exec(ctx, `WITH RECURSIVE children AS (SELECT id FROM ai_runs WHERE workspace_id=$1 AND id::text=$2 UNION ALL SELECT a.id FROM ai_runs a JOIN children c ON a.parent_ai_run_id=c.id WHERE a.workspace_id=$1) UPDATE ai_runs SET cancel_requested=true,payload=NULL,report=NULL,question=NULL,state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END WHERE workspace_id=$1 AND id IN (SELECT id FROM children)`, ws, r.PathValue("id"))
 	}
 	if e == nil {
 		_, e = tx.Exec(ctx, `INSERT INTO audit_events(workspace_id,action) VALUES($1,'ai.cancel_or_delete')`, ws)

@@ -1,6 +1,6 @@
 # Phase 2 implementation plan
 
-Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; optional OpenAI/Anthropic advisory triage is implemented; opt-in automatic admission is implemented; Slices D–E remain planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
+Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; optional OpenAI/Anthropic advisory triage is implemented; opt-in automatic admission is implemented; Slice D bounded tools/follow-up is implemented; Slice E remains planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
 
 The delivered workspace now groups configuration into dedicated Settings sections and separates investigation Report, AI analysis and Run activity views. Editors use focused drawers; the existing A/B workflows remain covered by browser regressions. See [interface direction](design/README.md) and [progress](progress.md).
 
@@ -105,6 +105,8 @@ Result: proactive investigations with explicit controls for cost and noise.
 
 ## Slice D — Bounded investigation tools and follow-up
 
+Implemented: explicit tool consent, approved mapped evidence/Prometheus/Loki collection, durable ordered step execution, cumulative budgets, no uncertain paid replay, scoped follow-up, privacy cleanup and UI progress. Automatic tools require additional opt-in and default false. See [AI operations](ai.md#bounded-tools-and-scoped-follow-up-slice-d) for exact limits and [progress](progress.md) for actual verification. Live provider validation is deferred by the user.
+
 Add the approved read-only evidence/Prometheus/Loki tools, persisted multi-step execution, ordered progress, cancellation between calls, and typed hypotheses with supporting and contradicting evidence. Run every tool through the existing source/network/query controls. Reserve cumulative tokens, tool requests, telemetry attempts, cost, and wall time before each step.
 
 Add report follow-up with a bounded transcript and expiry. A follow-up requiring fresh collection starts a linked bounded run; wider scope starts a new investigation. Model requests cannot select a destination or call arbitrary network/shell/query tools.
@@ -152,7 +154,7 @@ Slice B review fixes cover stale provider previews, access to older unresolved c
 - [x] C, second increment: OpenAI/Anthropic advisory triage, scoped reuse, budget admission and fixture scenarios.
 - [x] C, third increment: opt-in automatic investigation admission using bounded existing-evidence analysis.
 - [ ] C, remaining: optional Decisions endpoint and live usefulness evaluation.
-- [ ] D: tool loop, restart safety, evaluations, and follow-up verified.
+- [x] D: tool loop, restart safety, versioned fixture evaluations, and follow-up implemented; verification recorded in progress.
 - [ ] E: signed inbound trigger pipeline verified.
 - [x] Existing deterministic demo and all prior regression cases still pass.
 - [ ] Actual provider and notification smoke tests documented, with failures/limits stated.

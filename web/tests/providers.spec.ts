@@ -11,6 +11,7 @@ test("AI providers: setup, preview, report, fallback, cancellation and budgets",
     if (m.type() === "error" && !m.text().includes("Failed to load resource"))
       errors.push(m.text());
   });
+  page.on("response", (response) => { if (response.status() >= 500) errors.push(`${response.status()} ${response.url()}`); });
   page.on("dialog", (d) => d.accept());
   const sessionPath = "/tmp/sherlock-foundation-qa/ai-session.json";
   const state = JSON.parse(await readFile(sessionPath, "utf8"));
@@ -181,6 +182,41 @@ test("AI providers: setup, preview, report, fallback, cancellation and budgets",
     path: "/tmp/sherlock-foundation-qa/ai-report-mobile.png",
   });
   await page.setViewportSize({ width: 1536, height: 1024 });
+  // Slice D: real durable provider -> tool -> provider flow and scoped follow-up.
+  const toolConfig = await (await page.request.get("/api/v1/ai/settings")).json();
+  const toolProvider = toolConfig.providers.find((p: {kind:string}) => p.kind === "openai");
+  await post(`/ai/providers/${toolProvider.id}`, {provider:{...toolProvider,model:"fixture-tools"}});
+  await post(`/ai/providers/${toolProvider.id}/test`, {confirm:true});
+  await expect.poll(async () => (await (await page.request.get("/api/v1/ai/settings")).json()).providers.find((p:{id:string})=>p.id===toolProvider.id).capability).toBe("ready");
+  await page.reload();
+  await page.getByRole("button",{name:"AI analysis",exact:true}).click();
+  await analysis.getByLabel("Analysis provider").selectOption(toolProvider.id);
+  await analysis.getByLabel("Allow bounded read-only investigation tools",{exact:true}).check();
+  await analysis.getByRole("button",{name:"Preview AI payload"}).click();
+  await expect(analysis.locator("pre")).toContainText("sherlock_exploration");
+  await analysis.getByRole("button",{name:"Send to AI provider"}).click();
+  await expect(analysis.locator(".ai-report")).toContainText("Fixture analysis:",{timeout:15000});
+  await expect(analysis.getByRole("heading",{name:"Investigation steps"})).toBeVisible();
+  await expect(analysis.getByText("loki_patterns · completed",{exact:true})).toBeVisible();
+  await analysis.getByRole("button",{name:"Inspect tool evidence (2)",exact:true}).click();
+  await expect(analysis.getByRole("heading",{name:"Collected tool evidence"})).toBeVisible();
+  await analysis.getByRole("button",{name:"Ask a follow-up"}).click();
+  await expect(analysis.getByLabel("Allow bounded read-only investigation tools",{exact:true})).not.toBeChecked();
+  await analysis.getByLabel("Follow-up question").fill("What contradicts the dependency hypothesis?");
+  await analysis.getByRole("button",{name:"Preview AI payload"}).click();
+  await expect(analysis.locator("pre")).toContainText("What contradicts the dependency hypothesis?");
+  await analysis.getByRole("button",{name:"Send to AI provider"}).click();
+  await expect(analysis.locator(".ai-report")).toContainText("Fixture analysis:",{timeout:15000});
+  await expect(analysis.getByText("Question:",{exact:true})).toBeVisible();
+  await expect(analysis.getByText("provider · completed",{exact:true})).toHaveCount(1);
+  await analysis.getByRole("button",{name:"Cancel follow-up"}).click();
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await analysis.screenshot({path:"/tmp/sherlock-foundation-qa/ai-tools-followup-desktop.png"});
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await analysis.screenshot({path:"/tmp/sherlock-foundation-qa/ai-tools-followup-mobile.png"});
+  await page.setViewportSize({width:1536,height:1024});
+  expect(await page.locator("vite-error-overlay").count()).toBe(0);
   // Real API/worker changes; only the outbound transport is simulated in the test binary.
   for (const [model, terminal] of [
     ["fixture-invalid", "fallback"],

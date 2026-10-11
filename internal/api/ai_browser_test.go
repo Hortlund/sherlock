@@ -78,6 +78,27 @@ func TestBrowserFixtureServer(t *testing.T) {
 				return nil, r.Context().Err()
 			}
 		}
+		if b.Model == "fixture-tools" && bytes.Contains(raw, []byte(ai.ExplorationVersion)) {
+			var payload struct {
+				Input    string `json:"input"`
+				Messages []struct {
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			_ = json.Unmarshal(raw, &payload)
+			body := payload.Input
+			if body == "" && len(payload.Messages) > 0 {
+				body = payload.Messages[0].Content
+			}
+			var data struct {
+				Evidence []aiFact `json:"evidence"`
+				Tools    bool     `json:"tools_enabled"`
+			}
+			_ = json.Unmarshal([]byte(body), &data)
+			if data.Tools && len(data.Evidence) <= 6 {
+				mode = "tool:loki_patterns"
+			}
+		}
 		return fixtureAIResponse(r, mode)
 	})}}
 	if e = s.StartJobs(ctx); e != nil {

@@ -165,6 +165,12 @@ func (s *Server) admitAutomatic(ctx context.Context, a automaticArgs) error {
 	if e != nil {
 		return skipSnapshot("Triggering evidence is unavailable or exceeds the bounded analysis context.")
 	}
+	if policy.ToolsEnabled {
+		input, e = s.deepInput(ctx, tx, a.WorkspaceID, run, p, aiStart{Tools: true}, nil)
+		if e != nil {
+			return skipSnapshot("Evidence exceeds the bounded tool context.")
+		}
+	}
 	reserved := ai.Cost(int64(input.Bound), ai.OutputLimit, p.InputPrice, p.OutputPrice)
 	var admitted int64
 	if e = tx.QueryRow(ctx, `SELECT COALESCE(sum(CASE WHEN accounting IN ('reserved','unknown') THEN reserved ELSE charged END),0) FROM ai_runs WHERE workspace_id=$1 AND (created_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' OR accounting IN ('reserved','unknown'))`, a.WorkspaceID).Scan(&admitted); e != nil {
@@ -174,16 +180,26 @@ func (s *Server) admitAutomatic(ctx context.Context, a automaticArgs) error {
 		return skipSnapshot("AI budget unavailable, including unresolved reservations.")
 	}
 	var id string
-	e = tx.QueryRow(ctx, `INSERT INTO ai_runs(workspace_id,provider_id,provider_revision,policy_revision,run_id,service_id,purpose,model,origin,digest,payload,evidence_ids,reserved,input_bound,output_limit,input_price,output_price,price_date,expires_at,deadline,prompt_version,automation_batch_id) VALUES($1,$2,$3,$4,$5,$6,'automatic',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now()+interval '180 seconds',$19,$20) RETURNING id::text`, a.WorkspaceID, p.ID, p.Revision, ap.Revision, run, input.Service.ID, p.Model, input.Service.Origin, input.Digest, input.Payload, input.IDs, reserved, input.Bound, ai.OutputLimit, p.InputPrice, p.OutputPrice, p.PriceDate, input.Expires, ai.PromptVersion, a.BatchID).Scan(&id)
-	if e != nil {
-		return e
-	}
-	job, e := s.jobs.InsertTx(ctx, tx, aiArgs{a.WorkspaceID, id}, &river.InsertOpts{Queue: "ai", MaxAttempts: 20})
-	if e != nil {
-		return e
-	}
-	if _, e = tx.Exec(ctx, `UPDATE ai_runs SET job_id=$2 WHERE id=$1`, id, job.Job.ID); e != nil {
-		return e
+	if policy.ToolsEnabled {
+		id, e = s.insertDeep(ctx, tx, a.WorkspaceID, run, a.BatchID, p, ap, input, aiStart{Tools: true})
+		if errors.Is(e, errDeepBudget) {
+			return skipSnapshot(e.Error())
+		}
+		if e != nil {
+			return e
+		}
+	} else {
+		e = tx.QueryRow(ctx, `INSERT INTO ai_runs(workspace_id,provider_id,provider_revision,policy_revision,run_id,service_id,purpose,model,origin,digest,payload,evidence_ids,reserved,input_bound,output_limit,input_price,output_price,price_date,expires_at,deadline,prompt_version,automation_batch_id) VALUES($1,$2,$3,$4,$5,$6,'automatic',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now()+interval '180 seconds',$19,$20) RETURNING id::text`, a.WorkspaceID, p.ID, p.Revision, ap.Revision, run, input.Service.ID, p.Model, input.Service.Origin, input.Digest, input.Payload, input.IDs, reserved, input.Bound, ai.OutputLimit, p.InputPrice, p.OutputPrice, p.PriceDate, input.Expires, ai.PromptVersion, a.BatchID).Scan(&id)
+		if e != nil {
+			return e
+		}
+		job, e := s.jobs.InsertTx(ctx, tx, aiArgs{a.WorkspaceID, id}, &river.InsertOpts{Queue: "ai", MaxAttempts: 20})
+		if e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `UPDATE ai_runs SET job_id=$2 WHERE id=$1`, id, job.Job.ID); e != nil {
+			return e
+		}
 	}
 	if _, e = tx.Exec(ctx, `UPDATE automation_batches SET automatic_ai_run_id=$3,admission_status='launched',admission_reason=$4 WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.BatchID, id, reason); e != nil {
 		return e

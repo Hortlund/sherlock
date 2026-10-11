@@ -94,7 +94,7 @@ func (s *Server) aiRoutes(m *http.ServeMux) {
 	for path, h := range map[string]http.HandlerFunc{
 		"GET /api/v1/ai/settings": s.getAISettings, "POST /api/v1/ai/policy": s.saveAIPolicy, "POST /api/v1/ai/providers": s.saveAIProvider, "POST /api/v1/ai/providers/{id}": s.saveAIProvider, "POST /api/v1/ai/providers/{id}/delete": s.deleteAIProvider,
 		"POST /api/v1/ai/providers/{id}/test": s.startAITest, "POST /api/v1/ai/providers/{id}/triage-test": s.startAITriageTest, "POST /api/v1/ai/providers/{id}/triage-preview": s.previewTriage, "POST /api/v1/investigations/{id}/ai/preview": s.previewAI, "POST /api/v1/investigations/{id}/ai": s.startAIAnalysis,
-		"GET /api/v1/ai/runs": s.listAIRuns, "POST /api/v1/ai/runs/{id}/cancel": s.cancelAI, "POST /api/v1/ai/runs/{id}/delete": s.deleteAIContent, "POST /api/v1/ai/runs/{id}/reconcile": s.reconcileAI,
+		"GET /api/v1/ai/runs": s.listAIRuns, "GET /api/v1/ai/runs/{id}/steps": s.listDeepSteps, "POST /api/v1/ai/runs/{id}/cancel": s.cancelAI, "POST /api/v1/ai/runs/{id}/delete": s.deleteAIContent, "POST /api/v1/ai/runs/{id}/reconcile": s.reconcileAI,
 	} {
 		m.Handle(path, s.requireSession(h))
 	}
@@ -194,6 +194,12 @@ func (s *Server) saveAIPolicy(w http.ResponseWriter, r *http.Request) {
 // AI accounting/configuration writes share a workspace advisory lock, then provider/run locks. No transaction spans provider HTTP.
 func cancelAIQueued(ctx context.Context, tx pgx.Tx, ws, provider, reason string, purge bool) error {
 	_, e := tx.Exec(ctx, `UPDATE ai_runs SET state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END,reason=CASE WHEN state IN ('queued','analyzing') THEN $3 ELSE reason END,finished_at=CASE WHEN state IN ('queued','analyzing') THEN now() ELSE finished_at END,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END,payload=NULL,report=CASE WHEN $4 THEN NULL ELSE report END WHERE workspace_id=$1 AND ($2='' OR provider_id::text=$2)`, ws, provider, reason, purge)
+	if e == nil && purge {
+		_, e = tx.Exec(ctx, `UPDATE ai_runs SET question=NULL WHERE workspace_id=$1 AND deep AND ($2='' OR provider_id::text=$2)`, ws, provider)
+		if e == nil {
+			_, e = tx.Exec(ctx, `UPDATE ai_steps SET payload=NULL,result=NULL WHERE workspace_id=$1 AND ai_run_id IN (SELECT id FROM ai_runs WHERE workspace_id=$1 AND ($2='' OR provider_id::text=$2))`, ws, provider)
+		}
+	}
 	return e
 }
 func (s *Server) saveAIProvider(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 )
 
 type Policy struct {
+	ToolsEnabled            bool     `json:"tools_enabled"`
 	InvestigationProviderID string   `json:"investigation_provider_id"`
 	AutomaticConsent        bool     `json:"automatic_consent"`
 	TriageProviderID        string   `json:"triage_provider_id"`

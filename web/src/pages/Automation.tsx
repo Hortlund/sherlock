@@ -15,6 +15,7 @@ type Policy = {
   mode: "off" | "triage_only" | "auto_investigate";
   investigation_provider_id?: string;
   automatic_consent?: boolean;
+  tools_enabled?: boolean;
   services: string[];
   allow_demo: boolean;
   cooldown_minutes: number;
@@ -234,6 +235,7 @@ function PolicyForm({
       mode,
       investigation_provider_id: investigationProvider,
       automatic_consent: f.has("automatic_consent"),
+      tools_enabled: f.has("tools_enabled"),
       services: f.getAll("services").map(String),
       allow_demo: f.has("allow_demo"),
       triage_provider_id: f.has("triage_consent")
@@ -291,7 +293,9 @@ function PolicyForm({
           />
           Allow recurring automatic investigations and paid AI analysis
         </label>
-        <p className="field-hint">Applies only in Automatic investigations mode to the selected services. Sends the triggering scan evidence, including excerpts when allowed in AI settings. One active AI task per service; the configured cooldown also limits automatic investigations. Each analysis allows one paid attempt, up to 12,000 estimated input and 2,048 output tokens, and 180 seconds from enqueue. Daily and per-run AI budgets apply. No fresh telemetry collection or tool calls.</p>
+        <label className="checkbox-field"><input type="checkbox" name="tools_enabled" defaultChecked={policy.tools_enabled ?? false} />Allow bounded read-only tools for automatic investigations</label>
+        <p className="field-hint">Tools require this additional opt-in. Up to 6 provider calls, 6 tool requests and 12 telemetry attempts in the original scan windows; 30,000 cumulative input / 8,000 output tokens and 180 seconds from enqueue. Shared AI budgets apply to every step. Tools cannot change scope or send messages.</p>
+        <p className="field-hint">Applies only in Automatic investigations mode to the selected services. Sends the triggering scan evidence, including excerpts when allowed in AI settings. One active AI task per service; the configured cooldown also limits automatic investigations. Without tool opt-in, each analysis allows one paid attempt, up to 12,000 estimated input and 2,048 output tokens, and 180 seconds from enqueue. Daily and per-run AI budgets apply. Tools recollect only the original mapped windows.</p>
         <p className="field-hint">If triage recommends observe, needs attention, or more data, automatic analysis is skipped. Unavailable triage falls back to local rules within budget; cancelling triage stops admission. Off or Recommendations only stops future automatic dispatch. Existing findings are not replayed.</p>
         <Link to="#ai-settings">Review provider consent, payload previews and budgets →</Link>
       </fieldset>

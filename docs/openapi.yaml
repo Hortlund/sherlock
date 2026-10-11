@@ -2009,6 +2009,27 @@ paths:
             },
         },
     }
+  /api/v1/ai/runs/{id}/steps:
+    get:
+      summary: Read ordered bounded investigation steps and usage
+      description: At most 13 ordered steps. No raw prompts, provider reasoning or secrets are returned. Existing single-call runs return an empty list.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Persisted provider and approved-tool progress
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 13
+                    items: {$ref: '#/components/schemas/AIStep'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /api/v1/ai/providers/{id}/test:
     {
       "post":
@@ -2551,6 +2572,10 @@ components:
           type: string
           enum: ['off', triage_only, auto_investigate]
           description: Automatic investigations require explicit recurring consent and a tested provider. Off is the default.
+        tools_enabled:
+          type: boolean
+          default: false
+          description: Additional opt-in for bounded read-only tools, effective only with automatic mode and recurring consent.
         automatic_consent:
           type: boolean
           default: false
@@ -3299,6 +3324,9 @@ components:
         "properties":
           {
             "provider_id": { "type": "string", "format": "uuid" },
+            "tools": {"type": "boolean", "default": false, "description": "Explicitly allow approved read-only collection in the original service/windows. Only investigation preview/start endpoints use this field."},
+            "parent_ai_run_id": {"type": "string", "description": "Retained completed report in this investigation/provider for a follow-up. Empty for a new analysis."},
+            "question": {"type": "string", "maxLength": 512, "description": "Follow-up only; 1–512 UTF-8 bytes, sanitized before storage/egress. Required with parent_ai_run_id."},
             "confirm":
               {
                 "type": "boolean",
@@ -3464,6 +3492,11 @@ components:
             "provider_id": { "type": "string", "format": "uuid" },
             "investigation_id": { "type": "string" },
             "service_id": { "type": "string" },
+            "deep": {"type":"boolean"},
+            "tools": {"type":"boolean"},
+            "parent_ai_run_id": {"type":"string"},
+            "question": {"type":"string", "description":"Sanitized question, omitted content after expiry/deletion."},
+            "telemetry_attempts": {"type":"integer", "minimum":0, "maximum":12},
             "purpose": { "enum": ["test", "analysis", "triage_test", "triage", "automatic"] },
             "model": { "type": "string" },
             "origin": { "enum": ["live", "demo"] },
@@ -3480,6 +3513,8 @@ components:
                     "truncated",
                     "cancelled",
                     "unknown",
+                    "budget_exhausted",
+                    "insufficient_evidence",
                   ],
               },
             "reason": { "type": "string" },
@@ -3518,3 +3553,23 @@ components:
               },
           },
       }
+
+    AIStep:
+      type: object
+      required: [sequence, kind, state, reason, input_bound, output_limit, telemetry_limit, reserved, charged, accounting, evidence_ids]
+      properties:
+        sequence: {type: integer, minimum: 1, maximum: 13}
+        kind: {type: string, enum: [provider, evidence, prometheus_counts, loki_patterns]}
+        state: {type: string, enum: [queued, running, completed, failed, unknown, cancelled]}
+        reason: {type: string}
+        input_bound: {type: integer}
+        output_limit: {type: integer}
+        telemetry_limit: {type: integer}
+        reserved: {type: integer, description: Micro-USD}
+        charged: {type: integer, description: Micro-USD}
+        accounting: {type: string, enum: [reserved, settled, unknown]}
+        input_tokens: {type: [integer, 'null']}
+        output_tokens: {type: [integer, 'null']}
+        started_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        evidence_ids: {type: array, items: {type: string}}

@@ -65,6 +65,13 @@ func fixtureAIResponse(r *http.Request, mode string) (*http.Response, error) {
 		}
 		doc, _ = json.Marshal(ai.TriageDecision{Decision: decision, Reason: "Observed signal merits manual review; cause remains unknown.", EvidenceIDs: []string{id}})
 	}
+	if payload.Version == ai.ExplorationVersion {
+		action := ai.Action{Action: "report", Tool: "none", Report: &report}
+		if strings.HasPrefix(mode, "tool:") {
+			action = ai.Action{Action: "tool", Tool: strings.TrimPrefix(mode, "tool:")}
+		}
+		doc, _ = json.Marshal(action)
+	}
 	input := 100
 	if mode == "overusage" {
 		input = 13000

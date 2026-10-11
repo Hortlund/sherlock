@@ -6,7 +6,7 @@ Sherlock is a self-hosted investigation tool for developers and operators runnin
 
 Connect your existing telemetry, map a service, and investigate a finding. Add **OpenAI or Anthropic** for optional AI analysis, and send alerts to **Slack, Discord, or a webhook receiver**.
 
-**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations with optional AI triage. Opt-in automatic analysis is implemented; multi-step investigations and inbound alert triggers remain on the roadmap. The current installation supports one administrator and one workspace.
+**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations with optional AI triage. Opt-in automatic analysis is implemented; bounded read-only tool investigations and scoped follow-up are implemented. Inbound alert triggers remain on the roadmap. The current installation supports one administrator and one workspace.
 
 ## From signals to next steps
 
@@ -86,7 +86,7 @@ The next steps build on the same evidence, privacy, and budget controls. These a
 | Proactive rules and activity | Implemented · First part of Phase 2 C | Local investigation recommendations, selected services, 60-second grouping, persistent cooldowns and an activity history that explains recommendations and skips. |
 | AI triage | Implemented · Phase 2 C | Optional OpenAI/Anthropic assessments, separate model roles, bounded spend and reusable decisions. Automatic execution requires separate consent. |
 | Automatic investigation | Implemented · Phase 2 C | Explicit opt-in, bounded analysis of triggering evidence, admission history, privacy/budget/concurrency gates. Optional Decisions and live usefulness evaluation remain planned. |
-| Investigation tools and follow-up | Planned · Phase 2 D | Let AI request approved, bounded, read-only telemetry lookups across multiple steps, then support follow-up questions with cumulative cost and time limits. |
+| Investigation tools and follow-up | Implemented · Phase 2 D | Explicit tool consent, approved telemetry lookups, persisted steps and scoped follow-up with cumulative budgets, cancellation and expiry. |
 | Inbound alert triggers | Planned · Phase 2 E | Accept signed alerts from external systems, prevent replay/duplicates, and start investigations within administrator-configured service boundaries. |
 
 Longer-term ideas include Grafana discovery, Kubernetes and trace context, additional detectors, and broader user/workspace support. These are deferred beyond the current delivery plan. Automatic remediation and two-way chat bots are also outside the current scope.

@@ -54,9 +54,11 @@ func (s *Server) initJobs(ctx context.Context) error {
 	river.AddWorker(workers, &runWorker{server: s})
 	river.AddWorker(workers, &notificationWorker{server: s})
 	river.AddWorker(workers, &aiWorker{server: s})
+	river.AddWorker(workers, &deepWorker{server: s})
+	river.AddWorker(workers, &deepToolWorker{server: s})
 	river.AddWorker(workers, &automationWorker{server: s})
 	river.AddWorker(workers, &automaticWorker{server: s})
-	s.jobs, e = river.NewClient(driver, &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"default": {MaxWorkers: 4}, "notifications": {MaxWorkers: 2}, "ai": {MaxWorkers: 2}, "automation": {MaxWorkers: 1}}, JobTimeout: 100 * time.Second, RescueStuckJobsAfter: 4 * time.Minute, SoftStopTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(discardWriter{}, nil))})
+	s.jobs, e = river.NewClient(driver, &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"default": {MaxWorkers: 4}, "notifications": {MaxWorkers: 2}, "ai": {MaxWorkers: 2}, "ai_tools": {MaxWorkers: 2}, "automation": {MaxWorkers: 1}}, JobTimeout: 100 * time.Second, RescueStuckJobsAfter: 4 * time.Minute, SoftStopTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(discardWriter{}, nil))})
 	return e
 }
 

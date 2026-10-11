@@ -280,7 +280,7 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 	return e
 }
 func (s *Server) retainAI(ctx context.Context) error {
-	_, e := s.pool.Exec(ctx, `WITH expired AS(SELECT id FROM ai_runs WHERE expires_at<=now() AND (payload IS NOT NULL OR report IS NOT NULL) LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE ai_runs a SET payload=NULL,report=NULL,state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END,reason=CASE WHEN state IN ('queued','analyzing') THEN 'Evidence retention expired.' ELSE reason END,finished_at=COALESCE(finished_at,now()) FROM expired WHERE a.id=expired.id`)
+	_, e := s.pool.Exec(ctx, `WITH expired AS(SELECT id FROM ai_runs WHERE expires_at<=now() AND (payload IS NOT NULL OR report IS NOT NULL OR question IS NOT NULL OR EXISTS(SELECT 1 FROM ai_steps st WHERE st.ai_run_id=ai_runs.id AND (st.payload IS NOT NULL OR st.result IS NOT NULL))) LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE ai_runs a SET payload=NULL,report=NULL,state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END,reason=CASE WHEN state IN ('queued','analyzing') THEN 'Evidence retention expired.' ELSE reason END,finished_at=COALESCE(finished_at,now()) FROM expired WHERE a.id=expired.id`)
 	if e != nil {
 		return e
 	}

@@ -27,6 +27,7 @@ async function fixture(
     triage_provider_id: options.savedProvider ?? "",
     investigation_provider_id: "",
     automatic_consent: false,
+    tools_enabled: false,
     services: [] as string[],
     allow_demo: false,
     cooldown_minutes: 30,
@@ -502,6 +503,8 @@ test("automatic investigations require consent, persist selection, expose admiss
   await page.getByLabel("Include simulated demo findings").check();
   await page.getByRole("button", { name: "Save automation settings" }).click();
   expect(await consent.evaluate((el) => (el as HTMLInputElement).validity.valueMissing)).toBeTruthy();
+  await expect(page.getByLabel("Allow bounded read-only tools for automatic investigations")).not.toBeChecked();
+  await page.getByLabel("Allow bounded read-only tools for automatic investigations").check();
   await consent.check();
   await page.getByRole("button", { name: "Save automation settings" }).click();
   await expect(page.getByRole("status")).toContainText("Automation settings saved");
@@ -509,6 +512,7 @@ test("automatic investigations require consent, persist selection, expose admiss
   await expect(mode).toHaveValue("auto_investigate");
   await expect(provider).toHaveValue("anthropic-provider");
   await expect(consent).toBeChecked();
+  await expect(page.getByLabel("Allow bounded read-only tools for automatic investigations")).toBeChecked();
   await page.locator(".automation-entry summary").click();
   await expect(page.getByText("Automatic admission · launched")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open automatic investigation" })).toHaveAttribute("href", "/investigations?id=automatic-report");

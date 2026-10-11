@@ -57,6 +57,11 @@ type AIReport = {
   checks: string[];
 };
 type AIRun = {
+ deep?: boolean;
+ tools?: boolean;
+ parent_ai_run_id?: string;
+ question?: string;
+ telemetry_attempts?: number;
   id: string;
   provider_id: string;
   investigation_id: string;
@@ -791,11 +796,14 @@ export function AIAnalysis({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [expanded, setExpanded] = useState<string[] | null>(null);
   const [fresh, setFresh] = useState(false);
+  const [tools, setTools] = useState(false);
+  const [parent, setParent] = useState("");
+  const [question, setQuestion] = useState("");
   const previewGeneration = useRef(0);
   const previewAction = useMutation({
     mutationFn: ({ providerID }: { providerID: string; generation: number }) =>
       request<Preview>(`/investigations/${investigationID}/ai/preview`, {
-        body: { provider_id: providerID },
+        body: { provider_id: providerID, tools, parent_ai_run_id: parent, question },
         csrf: session.csrf_token,
       }),
     onSuccess: (result, variables) => {
@@ -815,7 +823,7 @@ export function AIAnalysis({
           provider_id: preview.provider_id,
           preview_digest: preview.preview_digest,
           confirm: true,
-          fresh,
+          fresh, tools, parent_ai_run_id: parent, question,
         },
         csrf: session.csrf_token,
       });
@@ -838,8 +846,8 @@ export function AIAnalysis({
       <p className="eyebrow">Optional AI assistance</p>
       <h2>Investigate with AI</h2>
       <p>
-        One bounded analysis of this investigation's existing evidence. It makes
-        suggestions; it does not collect new data or establish a root cause.
+        Analyze existing evidence or explicitly allow bounded read-only collection.
+        Results are suggestions; citations do not establish a root cause.
       </p>
       {settings.data?.fixture ? (
         <p>SIMULATED PROVIDER FIXTURE — no cloud calls.</p>
@@ -872,9 +880,19 @@ export function AIAnalysis({
               ))}
             </select>
           </label>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={tools} onChange={(e) => { setTools(e.target.checked); setPreview(null); previewGeneration.current++; }} />
+            Allow bounded read-only investigation tools
+          </label>
+          {tools ? <p className="field-hint">Uses only mapped Prometheus counts, Loki patterns and retained evidence in the original incident and comparison windows. Up to 6 provider calls, 6 tool requests, 12 telemetry attempts, 30,000 input and 8,000 output tokens, and 180 seconds from enqueue. Each step must fit the per-run and daily cost limits. No automatic paid retries.</p> : null}
+          {parent ? <div className="notification-note">
+            <label>Follow-up question<textarea aria-label="Follow-up question" maxLength={512} value={question} onChange={(e) => { setQuestion(e.target.value); setPreview(null); previewGeneration.current++; }} /></label>
+            <p>Same service and original windows. Uses up to three recent question/answer summaries and retained evidence; expires within 24 hours. Without tools, this is one provider call. Enabling tools starts a linked bounded run. For a wider scope, start a new investigation.</p>
+            <button onClick={() => {setParent("");setQuestion("");setPreview(null);previewGeneration.current++;}}>Cancel follow-up</button>
+          </div> : null}
           <button
             className="text-button"
-            disabled={!providerID || previewAction.isPending}
+            disabled={!providerID || previewAction.isPending || !!parent && !question.trim()}
             onClick={() =>
               previewAction.mutate({
                 providerID,
@@ -937,6 +955,9 @@ export function AIAnalysis({
       {latest ? (
         <>
           <RunHistory run={latest} />
+          {latest.question ? <p><strong>Question:</strong> {latest.question}</p> : null}
+          {latest.deep ? <DeepProgress key={latest.id} run={latest} /> : null}
+          {latest.report ? <button onClick={() => {setParent(latest.id);setProvider(latest.provider_id);setQuestion("");setTools(false);setPreview(null);previewGeneration.current++;}}>Ask a follow-up</button> : null}
           {active(latest) ? (
             <p role="status">
               {latest.state === "queued"
@@ -1019,4 +1040,28 @@ export function AIAnalysis({
       ) : null}
     </section>
   );
+}
+
+function DeepProgress({ run }: { run: AIRun }) {
+  const [evidence, setEvidence] = useState<string[] | null>(null);
+  const steps = useQuery({
+    queryKey: ["ai-steps", run.id, run.state],
+    queryFn: ({ signal }) => request<{
+      items: { sequence: number; kind: string; state: string; reason: string;
+        reserved: number; charged: number; evidence_ids: string[] }[]
+    }>(`/ai/runs/${run.id}/steps`, { signal }),
+    refetchInterval: active(run) ? 1000 : false,
+  });
+  return <div className="notification-note">
+    <h3>Investigation steps</h3>
+    <p>{run.telemetry_attempts ?? 0} / 12 telemetry attempts · {money(run.charged)} charged</p>
+    {steps.error ? <p role="alert">{steps.error.message}</p> : null}
+    <ol>{steps.data?.items.map(step => <li key={step.sequence}>
+      <strong>{step.kind} · {step.state}</strong>
+      <p>{step.reason}</p>
+      <p className="field-hint">Reserved {money(step.reserved)} · Charged {money(step.charged)}</p>
+      {step.evidence_ids.length ? <button className="text-button" onClick={() => setEvidence(step.evidence_ids)}>Inspect tool evidence ({step.evidence_ids.length})</button> : null}
+    </li>)}</ol>
+    {evidence ? <div><h4>Collected tool evidence</h4><StoredEvidence ids={evidence} /></div> : null}
+  </div>;
 }
