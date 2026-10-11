@@ -44,7 +44,7 @@ func (s *Server) enqueueTriage(ctx context.Context, tx pgx.Tx, ws, batch string,
 		return fallback("Triage summary unavailable, oversized, or outside provider service consent; local recommendation retained.")
 	}
 	var id string
-	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND purpose='triage' AND state='completed' AND report IS NOT NULL AND expires_at>now() ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, ap.Revision, input.Digest).Scan(&id)
+	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND purpose='triage' AND NOT cancel_requested AND state='completed' AND report IS NOT NULL AND expires_at>now() ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, ap.Revision, input.Digest).Scan(&id)
 	if e == nil {
 		_, e = tx.Exec(ctx, `UPDATE automation_batches SET ai_run_id=$3,triage_status='cached',triage_reason='Reused a validated assessment of the same scoped evidence.' WHERE workspace_id=$1 AND id=$2`, ws, batch, id)
 		return e
@@ -78,7 +78,7 @@ func (s *Server) enqueueTriage(ctx context.Context, tx pgx.Tx, ws, batch string,
 	if _, e = tx.Exec(ctx, `UPDATE ai_runs SET job_id=$2 WHERE id=$1`, id, job.Job.ID); e != nil {
 		return e
 	}
-	_, e = tx.Exec(ctx, `UPDATE automation_batches SET ai_run_id=$3,triage_status='queued',triage_reason='Optional AI assessment queued; investigations remain manual.' WHERE workspace_id=$1 AND id=$2`, ws, batch, id)
+	_, e = tx.Exec(ctx, `UPDATE automation_batches SET ai_run_id=$3,triage_status='queued',triage_reason='Optional AI assessment queued; automation policy controls admission.' WHERE workspace_id=$1 AND id=$2`, ws, batch, id)
 	return e
 }
 

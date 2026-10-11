@@ -1,0 +1,11 @@
+ALTER TABLE ai_runs DROP CONSTRAINT ai_runs_purpose_check;
+ALTER TABLE ai_runs ADD CONSTRAINT ai_runs_purpose_check CHECK(purpose IN ('test','analysis','triage_test','triage','automatic'));
+ALTER TABLE ai_runs ADD COLUMN automation_batch_id uuid;
+ALTER TABLE ai_runs ADD CONSTRAINT ai_automatic_batch_scope FOREIGN KEY(workspace_id,automation_batch_id) REFERENCES automation_batches(workspace_id,id) ON DELETE SET NULL (automation_batch_id);
+CREATE UNIQUE INDEX ai_automatic_batch ON ai_runs(workspace_id,automation_batch_id) WHERE automation_batch_id IS NOT NULL;
+ALTER TABLE automation_batches ADD COLUMN automatic_ai_run_id uuid;
+ALTER TABLE automation_batches ADD CONSTRAINT automatic_ai_scope FOREIGN KEY(workspace_id,automatic_ai_run_id) REFERENCES ai_runs(workspace_id,id) ON DELETE SET NULL (automatic_ai_run_id);
+ALTER TABLE automation_batches ADD COLUMN admission_status text NOT NULL DEFAULT 'off' CHECK(admission_status IN ('off','pending','skipped','launched'));
+ALTER TABLE automation_batches ADD COLUMN admission_reason text NOT NULL DEFAULT 'Automatic investigations were not enabled for this activity.';
+ALTER TABLE automation_batches ADD COLUMN admission_job_id bigint;
+ALTER TABLE automation_services ADD COLUMN next_investigation_at timestamptz;

@@ -135,3 +135,28 @@ Official provider and webhook references are linked in the active specification.
 
 - Extend the shared workspace scope guard to recommendation evaluation and triage dispatch/publication, before service/rule locks and AI accounting. This prevents the three-way cycle where triage holds a service while waiting for accounting, an editor holds the workspace while waiting for that service, and an accounting audit insert waits for the workspace. Keep the guard compatible with FK checks and release all transaction locks before provider HTTP.
 - Exercise actual evaluation/worker and service-edit paths with a held accounting transaction. Observe database lock waits before attempting the accounting audit insert; verify admission, dispatch and publication complete without losing the generated report or settled usage. The regression fails with PostgreSQL `40P01` in all three phases before the fix.
+
+
+## 2026-10-11 — Opt-in automatic investigation admission
+
+- Add `auto_investigate`, a separate tested investigation provider and explicit recurring consent. Off remains the default; Recommendations only preserves manual investigations. Do not enable the user's installation during implementation.
+- Keep admission separate from local evaluation and triage in a durable River automation job. Wait for triage when configured; accept investigate, skip other valid advice, fall back to local rules on unavailable triage, and respect explicit cancellation. Notifications remain independently routed.
+- Reuse Slice B's one-call analysis of existing evidence. Build a deterministic report from the triggering scan's validated, consistent evidence window; do not recollect telemetry or implement Slice D tools. Reject inconsistent or inadequate snapshots.
+- Atomically persist the report, cost reservation, AI job, admission decision, audit event, report-ready event and separate automatic cooldown. Use the existing shared workspace/service/policy/settings/finding lock order before accounting and a unique scoped batch-to-AI link. Skips neither consume the automatic cooldown nor leave provisional reports.
+- Recheck automation eligibility at AI dispatch/publication and during HTTP; mapping/privacy/source edits, lifecycle/recovery and policy revisions can revoke work. Preserve the existing deterministic report and incurred accounting if generated content is withheld. Unknown paid outcomes are not replayed.
+- Surface the applied action and reason separately from local recommendation/model advice. Defaults remain conservative; live provider usefulness and cost evaluation remain deployment gates.
+
+
+## 2026-10-11 — Automatic admission review fixes
+
+- Preserve explicit cancel/delete intent independently of terminal AI state. Completion can win the state transition without overriding a later stop request. Admission checks that marker, triage cache reuse excludes it, and the same accounting transaction cancels active automatic children through all referring batches. Read batch links without acquiring batch locks after accounting; retain completed history and actual/unknown charges.
+- Automation policy saves take workspace scope, policy and accounting locks, then cancel active triage/automatic work in the same commit as the new revision. The worker's final persisted-state check now observes an Off save that commits after dispatch intent. Existing manual analysis/capability tests remain independent; no transaction spans provider HTTP.
+- Serialize bounded batch/AI history deletes with a transaction advisory lock before either table is locked. Their circular `ON DELETE SET NULL` relationships otherwise deadlock when separate replicas delete opposite sides concurrently. Content expiry and unknown-reservation retention rules are unchanged.
+- Use forward migration 011 for the cancellation marker. Opt-in requirements and Off defaults remain unchanged. Reproduce completion/cancellation races and the retention deadlock, and exercise admission/revocation in both database-observed lock orders before recording verification in progress.
+
+
+## 2026-10-11 — Automatic-to-manual result reuse
+
+- Let manual analysis reuse completed automatic results with matching workspace, provider and AI policy revisions, evidence/request digest, retained report and expiry. Both use the same analysis report contract. Keep the original automatic purpose and usage record; reuse creates no reservation, job or provider call.
+- Keep cross-purpose reuse limited to completed results. Active automatic tasks retain their automation cancellation semantics and continue to exclude a second task for the service. Explicit fresh requests bypass completed results and create ordinary manual analysis subject to existing consent and budget checks.
+- Reusing a result or requesting fresh manual analysis never enables automation. Off and recurring-consent requirements are unchanged. Cover both providers, Off after completion, fresh requests and invalidated results through the real API and fixture workers.

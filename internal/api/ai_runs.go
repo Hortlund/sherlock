@@ -130,7 +130,10 @@ func (s *Server) enqueueAI(w http.ResponseWriter, r *http.Request, in aiStart, r
 		}
 	}
 	var existing string
-	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND purpose=$6 AND (state IN ('queued','analyzing') OR (state='completed' AND NOT $7 AND report IS NOT NULL AND expires_at>now())) ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, policy.Revision, input.Digest, purpose, in.Fresh || purpose == "test" || purpose == "triage_test").Scan(&existing)
+	// Completed automatic analysis has the same report contract as manual
+	// analysis. Reuse it under the same cache guards, without taking over active
+	// automatic work or changing its provenance and cancellation policy.
+	e = tx.QueryRow(ctx, `SELECT id::text FROM ai_runs WHERE workspace_id=$1 AND provider_id=$2 AND provider_revision=$3 AND policy_revision=$4 AND digest=$5 AND (purpose=$6 OR ($6='analysis' AND purpose='automatic' AND state='completed')) AND (state IN ('queued','analyzing') OR (state='completed' AND NOT $7 AND report IS NOT NULL AND expires_at>now())) ORDER BY created_at DESC LIMIT 1`, ws, p.ID, p.Revision, policy.Revision, input.Digest, purpose, in.Fresh || purpose == "test" || purpose == "triage_test").Scan(&existing)
 	if e == nil {
 		s.json(w, 202, map[string]any{"id": existing, "reused": true})
 		return
@@ -234,11 +237,17 @@ func (s *Server) changeAIContent(w http.ResponseWriter, r *http.Request, purge b
 	e = aiWorkspaceLock(ctx, tx, ws)
 	if e == nil {
 		var tag pgconn.CommandTag
-		tag, e = tx.Exec(ctx, `UPDATE ai_runs SET state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END,reason=CASE WHEN state IN ('queued','analyzing') THEN 'Cancelled by administrator; transmitted data cannot be recalled.' ELSE reason END,finished_at=CASE WHEN state IN ('queued','analyzing') THEN now() ELSE finished_at END,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END,payload=NULL,report=CASE WHEN $3 THEN NULL ELSE report END WHERE workspace_id=$1 AND id::text=$2`, ws, r.PathValue("id"), purge)
+		tag, e = tx.Exec(ctx, `UPDATE ai_runs SET cancel_requested=true,state=CASE WHEN state IN ('queued','analyzing') THEN 'cancelled' ELSE state END,reason=CASE WHEN state IN ('queued','analyzing') THEN 'Cancelled by administrator; transmitted data cannot be recalled.' ELSE reason END,finished_at=CASE WHEN state IN ('queued','analyzing') THEN now() ELSE finished_at END,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END,payload=NULL,report=CASE WHEN $3 THEN NULL ELSE report END WHERE workspace_id=$1 AND id::text=$2`, ws, r.PathValue("id"), purge)
 		if e == nil && tag.RowsAffected() == 0 {
 			s.missing(w, r, pgx.ErrNoRows)
 			return
 		}
+	}
+	if e == nil {
+		// Admission holds this same accounting lock: if cancellation wins it
+		// sees cancel_requested; if admission wins we cancel its child here.
+		// Read batch links without locking/updating batches after accounting.
+		_, e = tx.Exec(ctx, `UPDATE ai_runs SET cancel_requested=true,state='cancelled',reason='Upstream triage was cancelled by administrator.',finished_at=now(),payload=NULL,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END WHERE workspace_id=$1 AND purpose='automatic' AND state IN ('queued','analyzing') AND automation_batch_id IN (SELECT id FROM automation_batches WHERE workspace_id=$1 AND ai_run_id::text=$2)`, ws, r.PathValue("id"))
 	}
 	if e == nil {
 		_, e = tx.Exec(ctx, `INSERT INTO audit_events(workspace_id,action) VALUES($1,'ai.cancel_or_delete')`, ws)

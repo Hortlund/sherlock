@@ -2251,7 +2251,7 @@ paths:
     {
       "post":
         {
-          "summary": "Cancel queued or active AI processing; uncertain charges remain reserved",
+          "summary": "Persist cancellation and stop active AI plus dependent automatic work; uncertain charges remain reserved",
           "parameters":
             [
               { "$ref": "#/components/parameters/CSRF" },
@@ -2266,7 +2266,7 @@ paths:
             {
               "200":
                 {
-                  "description": "Cancel queued or active AI processing; uncertain charges remain reserved",
+                  "description": "Persist cancellation and stop active AI plus dependent automatic work; uncertain charges remain reserved",
                   "content":
                     {
                       "application/json":
@@ -2309,7 +2309,7 @@ paths:
     {
       "post":
         {
-          "summary": "Delete local AI content and cancel outstanding processing; keep usage metadata",
+          "summary": "Delete local AI content and cancel outstanding and dependent automatic processing; keep usage metadata",
           "parameters":
             [
               { "$ref": "#/components/parameters/CSRF" },
@@ -2324,7 +2324,7 @@ paths:
             {
               "200":
                 {
-                  "description": "Delete local AI content and cancel outstanding processing; keep usage metadata",
+                  "description": "Delete local AI content and cancel outstanding and dependent automatic processing; keep usage metadata",
                   "content":
                     {
                       "application/json":
@@ -2472,7 +2472,7 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     post:
-      summary: Save local recommendation policy; invalidate queued older revisions
+      summary: Save automation policy; atomically cancel active triage and automatic AI from older revisions
       parameters:
         - { $ref: '#/components/parameters/CSRF' }
       requestBody:
@@ -2494,7 +2494,7 @@ paths:
   /api/v1/automation/activity:
     get:
       summary: List local recommendations and skips, newest first
-      description: Up to 50 entries per page, retained for 30 days. Missing or out-of-scope cursors return an empty page. No automatic investigation or model call is started by this pipeline.
+      description: Up to 50 entries per page, retained for 30 days. Missing or out-of-scope cursors return an empty page. Reading history never starts work. Automatic admission requires separate recurring consent and Automatic investigations mode.
       parameters:
         - name: service_id
           in: query
@@ -2549,8 +2549,16 @@ components:
       properties:
         mode:
           type: string
-          enum: ['off', triage_only]
-          description: Local recommendations with optional advisory AI triage; investigations remain manual.
+          enum: ['off', triage_only, auto_investigate]
+          description: Automatic investigations require explicit recurring consent and a tested provider. Off is the default.
+        automatic_consent:
+          type: boolean
+          default: false
+          description: Required true in auto_investigate mode; authorizes recurring bounded paid analysis of selected services.
+        investigation_provider_id:
+          type: string
+          default: ""
+          description: Tested investigation provider required in auto_investigate mode, subject to service consent and positive daily/per-run budgets and prices.
         triage_provider_id:
           type: string
           default: ""
@@ -2606,6 +2614,19 @@ components:
       type: object
       required: [id, service_id, service_name, origin, state, reason, policy_revision, mapping_revision, created_at, due_at, evaluated_at, next_eligible_at, items]
       properties:
+        admission:
+          type: object
+          properties:
+            status: { type: string, enum: ['off', pending, skipped, launched] }
+            reason: { type: string }
+            ai_run_id: { type: [string, 'null'] }
+            investigation_id: { type: [string, 'null'] }
+            state: { type: [string, 'null'] }
+            run_reason: { type: [string, 'null'] }
+            model: { type: [string, 'null'] }
+            accounting: { type: [string, 'null'] }
+            reserved: { type: [integer, 'null'], description: Micro-USD }
+            charged: { type: [integer, 'null'], description: Micro-USD }
         triage: { $ref: '#/components/schemas/TriageActivity' }
         id: { type: string, format: uuid }
         service_id: { type: string, format: uuid }
@@ -3443,7 +3464,7 @@ components:
             "provider_id": { "type": "string", "format": "uuid" },
             "investigation_id": { "type": "string" },
             "service_id": { "type": "string" },
-            "purpose": { "enum": ["test", "analysis", "triage_test", "triage"] },
+            "purpose": { "enum": ["test", "analysis", "triage_test", "triage", "automatic"] },
             "model": { "type": "string" },
             "origin": { "enum": ["live", "demo"] },
             "state":

@@ -1,6 +1,6 @@
-# Proactive recommendations
+# Proactive recommendations and automatic investigations
 
-Sherlock can recommend a manual investigation when a detector-backed signal changes meaningfully. Local Go rules remain the default. Optional OpenAI or Anthropic triage can add an advisory assessment after a recommendation; investigations always start manually, and triage sends no notifications. Existing factual notification rules continue independently.
+Sherlock can recommend a manual investigation when a detector-backed signal changes meaningfully. Local Go rules remain the default. Optional OpenAI or Anthropic triage can add an advisory assessment after a recommendation; investigations remain manual in Recommendations only mode. A separate opt-in mode admits bounded automatic analysis; triage itself sends no notifications. Existing factual notification rules continue independently.
 
 ## Enable it
 
@@ -12,7 +12,7 @@ Sherlock can recommend a manual investigation when a detector-backed signal chan
 
 Existing findings establish a fresh comparison on their next observation after a settings change. Enabling recommendations does not backfill an existing incident. The stable demo may therefore show no new recommendation until a new occurrence or meaningful change is observed. Manual scans can also contribute finding changes, but recommendations still require scheduled monitoring to be enabled.
 
-Choose **Off** to pause recommendations. Activity may still record skipped meaningful changes, explaining that recommendations are off. There is no automatic-investigation mode in this release.
+Choose **Off** to pause recommendations. Activity may still record skipped meaningful changes, explaining that recommendations are off. Off also prevents new automatic investigation dispatch; previously transmitted requests may still incur charges.
 
 ## Rules and bounds
 
@@ -43,7 +43,7 @@ A healthy scan preserves the original activity measurement and records why it no
 All routes require the workspace session; writes require the normal CSRF header:
 
 - `GET /api/v1/automation/policy` returns defaults or saved settings, including `revision`.
-- `POST /api/v1/automation/policy` accepts the full policy and current revision. Stale revisions return 409. `mode` accepts only `off` and `triage_only`; the latter means local recommendations with optional advisory AI when `triage_provider_id` is set. An empty provider ID keeps processing local. Investigations remain manual in both modes.
+- `POST /api/v1/automation/policy` accepts the full policy and current revision. Stale revisions return 409. `mode` accepts `off`, `triage_only` and `auto_investigate`. Automatic mode requires `automatic_consent: true` and `investigation_provider_id`; the selected investigation model must be tested and workspace AI/budgets/prices enabled. `triage_provider_id` independently opts into optional AI triage. Without it, local rules decide admission.
 - `GET /api/v1/automation/activity?service_id=…&cursor=…` returns `items` and `next_cursor`. The optional cursor belongs to the same workspace and service filter. Missing/out-of-scope cursors return an empty page.
 - `GET /api/v1/findings?id=…` supports links to findings beyond the first list page. The UI ignores retained list filters/cursors while opening an exact finding, including through browser Back/Forward.
 
@@ -68,4 +68,23 @@ Migration 009 adds triage capability and links between AI accounting and activit
 
 ## Next part of Slice C
 
-Still planned: optional OpenAI Decisions, live model-usefulness evaluation, and explicitly enabled automatic investigations with admission controls. The implemented adapters use OpenAI Responses and Anthropic Messages structured output. Neither model can start an investigation, alter a finding or suppress a factual notification.
+Still planned: optional OpenAI Decisions and live model-usefulness evaluation. Opt-in automatic admission is described below. The implemented adapters use OpenAI Responses and Anthropic Messages structured output. Neither model can start an investigation, alter a finding or suppress a factual notification.
+
+
+## Opt-in automatic investigations
+
+Automatic investigations default to **Off**; upgrading does not enable them. In **Settings → AI providers**, configure and test an investigation model, select allowed services/demo origin, review excerpt release, and set positive daily and per-run budgets and prices. In **Settings → Automation**, choose **Automatic investigations**, select that provider and the services, and check **Allow recurring automatic investigations and paid AI analysis**. Demo processing requires both provider and automation demo consent. No per-event confirmation is needed after this explicit opt-in.
+
+The existing change gate, 60-second grouping and recommendation cooldown apply. A separate durable admission job waits for optional triage. Valid `investigate` advice proceeds; `observe`, `needs_attention` and `need_more_data` skip automatic analysis without changing local recommendations, findings or factual alerts. Unavailable/refused/invalid triage falls back to local rules under the remaining shared budget. Cancelling or deleting triage stops pending admission even if triage completed just before the request. It also cancels any queued or in-flight automatic analysis derived from that triage, including cached references. Cancelled assessments are excluded from future cache reuse; completed history and incurred usage remain. Unresolved active triage never overlaps automatic analysis. A triage task that remains active beyond its deadline plus 30 seconds skips admission.
+
+Admission rechecks policy revision, recurring consent, service/demo selection, scheduled monitoring, mapping, detector configuration, finding lifecycle, recovery and complete retained evidence no older than 15 minutes. Provider service consent, tested capability and budgets also apply. One active AI task per service is enforced across manual, triage and automatic work. Automatic investigation cooldown is separately persisted, using the same configured 5–1440 minute duration (default 30), and starts only after successful admission. Skipped work is not replayed when a budget or cooldown becomes available.
+
+This increment analyzes the **triggering scan's stored evidence**. It builds a deterministic report from a consistent incident/comparison window, then enqueues the existing Slice B analysis: one provider attempt, 12,000 estimated input tokens, 2,048 output tokens, and a 180-second deadline from enqueue. Permitted excerpts follow existing provider/service settings. No new telemetry collection, tools or follow-up loop is included. Mixed windows or inadequate evidence cause a visible skip. The deterministic report remains available if AI fails.
+
+The report, AI reservation and job, admission link, audit event and cooldown commit atomically. A unique workspace/batch link plus locked terminal admission state prevents duplicate runs under restart or concurrent delivery. Unknown charges remain reserved and paid requests are never automatically replayed. Mapping/privacy, automation, monitoring, source, finding and recovery eligibility are rechecked before dispatch, during the request and before publishing generated content. Revocation withholds generated content while preserving incurred usage accounting.
+
+Activity shows **Automatic admission** separately from local recommendations and AI advice, with launched/skipped/pending status, reason, linked investigation, AI state, model, accounting and cancellation. Choose **Off** or **Recommendations only** to stop future automatic dispatch; any automation settings save invalidates work from older revisions and atomically cancels queued/in-flight triage and automatic AI tasks. Manual analysis and capability tests are unaffected. Policy saves take the shared workspace guard, policy lock and accounting lock in that order; cancellation shares the admission accounting lock, so both race orderings preserve the stop request. A saved consent checkbox alone cannot start work outside Automatic investigations mode.
+
+Migration 010 adds scoped batch/run links, admission state/job metadata and the separate investigation cooldown without rewriting earlier migrations. Migration 011 adds durable cancellation intent without modifying previously applied migrations. Retention finalizes expired/exhausted admission jobs and serializes linked batch/AI history deletes across replicas to avoid circular foreign-key deadlocks. Deterministic report-ready notifications use existing administrator routing; model output never selects recipients or suppresses factual alerts. No new credentials are stored.
+
+Live provider/notification smoke tests and versioned usefulness, factual-error, missed-case, cost and latency measurements remain rollout gates before enabling unattended AI in a deployment. Fixture tests validate contracts and control flow, not live model quality.

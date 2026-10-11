@@ -11,20 +11,22 @@ import (
 )
 
 type Policy struct {
-	TriageProviderID string   `json:"triage_provider_id"`
-	Mode             string   `json:"mode"`
-	Services         []string `json:"services"`
-	AllowDemo        bool     `json:"allow_demo"`
-	CooldownMinutes  int      `json:"cooldown_minutes"`
-	GrowthMultiplier float64  `json:"growth_multiplier"`
-	Revision         int      `json:"revision"`
+	InvestigationProviderID string   `json:"investigation_provider_id"`
+	AutomaticConsent        bool     `json:"automatic_consent"`
+	TriageProviderID        string   `json:"triage_provider_id"`
+	Mode                    string   `json:"mode"`
+	Services                []string `json:"services"`
+	AllowDemo               bool     `json:"allow_demo"`
+	CooldownMinutes         int      `json:"cooldown_minutes"`
+	GrowthMultiplier        float64  `json:"growth_multiplier"`
+	Revision                int      `json:"revision"`
 }
 
 func Defaults() Policy {
 	return Policy{Mode: "off", Services: []string{}, CooldownMinutes: 30, GrowthMultiplier: 2}
 }
 func (p Policy) Valid() bool {
-	return (p.Mode == "off" || p.Mode == "triage_only") && p.CooldownMinutes >= 5 && p.CooldownMinutes <= 1440 && p.GrowthMultiplier >= 1.5 && p.GrowthMultiplier <= 10 && len(p.TriageProviderID) <= 36 && len(p.Services) <= 100 && p.Revision >= 0
+	return (p.Mode == "off" || p.Mode == "triage_only" || (p.Mode == "auto_investigate" && p.AutomaticConsent && p.InvestigationProviderID != "")) && len(p.InvestigationProviderID) <= 36 && p.CooldownMinutes >= 5 && p.CooldownMinutes <= 1440 && p.GrowthMultiplier >= 1.5 && p.GrowthMultiplier <= 10 && len(p.TriageProviderID) <= 36 && len(p.Services) <= 100 && p.Revision >= 0
 }
 
 type Measurement struct {

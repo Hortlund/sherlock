@@ -12,7 +12,9 @@ import { StatusBadge } from "../components/WorkspaceUI";
 import { useServices, type Service } from "./Sources";
 
 type Policy = {
-  mode: "off" | "triage_only";
+  mode: "off" | "triage_only" | "auto_investigate";
+  investigation_provider_id?: string;
+  automatic_consent?: boolean;
   services: string[];
   allow_demo: boolean;
   cooldown_minutes: number;
@@ -21,6 +23,8 @@ type Policy = {
   triage_provider_id?: string;
 };
 type TriageProvider = {
+  model?: string;
+  capability?: string;
   id: string;
   kind: string;
   triage_model?: string;
@@ -28,6 +32,19 @@ type TriageProvider = {
   enabled: boolean;
 };
 type Activity = {
+  admission?: {
+    status: string;
+    reason: string;
+    ai_run_id: string | null;
+    investigation_id: string | null;
+    state: string | null;
+    run_reason: string | null;
+    model: string | null;
+    accounting: string | null;
+    reserved: number | null;
+    charged: number | null;
+  };
+
   triage?: {
     status: string;
     reason: string;
@@ -107,15 +124,14 @@ export function AutomationSettings() {
               <StatusBadge
                 value={policy.data.mode === "off" ? "off" : "recommended"}
               >
-                {policy.data.mode === "off" ? "Off" : "Recommendations"}
+                {policy.data.mode === "off" ? "Off" : policy.data.mode === "auto_investigate" ? "Automatic investigations" : "Recommendations"}
               </StatusBadge>
             ) : null}
           </div>
           <p className="notification-note">
-            Rules evaluate findings locally. This version recommends manual
-            investigation; investigations always start manually. Optional AI
-            triage adds an advisory assessment after the local rules qualify a
-            signal.
+            Rules evaluate findings locally. Recommendations only keeps investigations manual.
+            Automatic investigations require separate recurring consent and a tested
+            investigation model. Optional AI triage helps decide which qualifying changes to investigate.
           </p>
           {policy.error || services.error ? (
             <p role="alert">{(policy.error ?? services.error)?.message}</p>
@@ -172,8 +188,8 @@ export function AutomationSettings() {
           </Link>
           <p className="field-hint">
             Existing notification rules keep running independently. AI advice
-            cannot change findings or send alerts. Automatic investigations
-            remain disabled.
+            cannot change findings or send alerts. Automatic investigations are off
+            by default and require explicit opt-in.
           </p>
         </aside>
       </div>
@@ -201,6 +217,10 @@ function PolicyForm({
   const [triageProvider, setTriageProvider] = useState(
     policy.triage_provider_id ?? "",
   );
+  const [mode, setMode] = useState(policy.mode);
+  const [investigationProvider, setInvestigationProvider] = useState(
+    policy.investigation_provider_id ?? "",
+  );
   const save = useMutation({
     mutationFn: (body: Policy) =>
       request<Policy>("/automation/policy", { body, csrf }),
@@ -211,7 +231,9 @@ function PolicyForm({
     const f = new FormData(e.currentTarget);
     save.mutate({
       ...policy,
-      mode: f.get("mode") as Policy["mode"],
+      mode,
+      investigation_provider_id: investigationProvider,
+      automatic_consent: f.has("automatic_consent"),
       services: f.getAll("services").map(String),
       allow_demo: f.has("allow_demo"),
       triage_provider_id: f.has("triage_consent")
@@ -225,11 +247,54 @@ function PolicyForm({
     <form onSubmit={submit}>
       <label className="select-field">
         Mode
-        <select name="mode" defaultValue={policy.mode}>
-          <option value="off">Off — pause recommendations</option>
+        <select
+          name="mode"
+          value={mode}
+          onChange={(e) => setMode(e.target.value as Policy["mode"])}
+        >
+          <option value="off">Off — pause automation</option>
           <option value="triage_only">Recommendations only</option>
+          <option value="auto_investigate">Automatic investigations</option>
         </select>
       </label>
+      <fieldset>
+        <legend>Automatic investigation consent</legend>
+        <label className="select-field">
+          Investigation provider
+          <select
+            name="investigation_provider"
+            value={investigationProvider}
+            onChange={(e) => setInvestigationProvider(e.target.value)}
+            required={mode === "auto_investigate"}
+          >
+            <option value="">Choose a tested investigation model</option>
+            {investigationProvider &&
+            !providers.some((p) => p.id === investigationProvider) ? (
+              <option value={investigationProvider}>
+                Previously selected provider · unavailable
+              </option>
+            ) : null}
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.kind} · {p.model || "model not configured"} ·{" "}
+                {p.capability ?? "untested"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            name="automatic_consent"
+            defaultChecked={policy.automatic_consent ?? false}
+            required={mode === "auto_investigate"}
+          />
+          Allow recurring automatic investigations and paid AI analysis
+        </label>
+        <p className="field-hint">Applies only in Automatic investigations mode to the selected services. Sends the triggering scan evidence, including excerpts when allowed in AI settings. One active AI task per service; the configured cooldown also limits automatic investigations. Each analysis allows one paid attempt, up to 12,000 estimated input and 2,048 output tokens, and 180 seconds from enqueue. Daily and per-run AI budgets apply. No fresh telemetry collection or tool calls.</p>
+        <p className="field-hint">If triage recommends observe, needs attention, or more data, automatic analysis is skipped. Unavailable triage falls back to local rules within budget; cancelling triage stops admission. Off or Recommendations only stops future automatic dispatch. Existing findings are not replayed.</p>
+        <Link to="#ai-settings">Review provider consent, payload previews and budgets →</Link>
+      </fieldset>
       <fieldset>
         <legend>Selected services — none means none</legend>
         <div className="automation-service-list">
@@ -320,8 +385,8 @@ function PolicyForm({
           to the selected provider, with no names or log excerpts. Provider
           service consent and demo opt-in also apply. Shares your AI budget; up
           to 4,000 estimated input and 1,000 output tokens with a 15-second
-          deadline. No automatic paid retries or investigations. Local
-          recommendations remain available when AI is unavailable.
+          deadline. No automatic paid retries. Local recommendations remain available
+          when AI is unavailable; automatic analysis follows the mode and consent above.
         </p>
         <Link to="#ai-settings">
           Configure models, budgets and preview a triage payload sample →
@@ -441,8 +506,8 @@ function ActivityHistory({
                   </p>
                   <p>{a.triage.report.reason}</p>
                   <p className="field-hint">
-                    Advisory only. The local rule decision above is unchanged;
-                    choose whether to investigate manually.
+                    The local rule decision above is unchanged. Automatic admission,
+                    when enabled, is shown separately below.
                   </p>
                 </>
               ) : (
@@ -465,6 +530,39 @@ function ActivityHistory({
                   onClick={() => cancel.mutate(a.triage!.run_id!)}
                 >
                   Cancel AI triage
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {a.admission ? (
+            <div className="notification-note">
+              <strong>Automatic admission · {a.admission.status}</strong>
+              <p>{a.admission.reason}</p>
+              {a.admission.investigation_id ? (
+                <Link to={`/investigations?id=${a.admission.investigation_id}`}>
+                  Open automatic investigation →
+                </Link>
+              ) : null}
+              {a.admission.state ? (
+                <p>
+                  AI analysis · {a.admission.state} · {a.admission.model}
+                  <br />{a.admission.run_reason}
+                </p>
+              ) : null}
+              {a.admission.accounting ? (
+                <p className="field-hint">
+                  {a.admission.accounting} · Reserved $
+                  {((a.admission.reserved ?? 0) / 1e6).toFixed(6)} · Charged $
+                  {((a.admission.charged ?? 0) / 1e6).toFixed(6)}
+                </p>
+              ) : null}
+              {a.admission.ai_run_id &&
+              ["queued", "analyzing"].includes(a.admission.state ?? "") ? (
+                <button
+                  disabled={cancel.isPending}
+                  onClick={() => cancel.mutate(a.admission!.ai_run_id!)}
+                >
+                  Cancel automatic analysis
                 </button>
               ) : null}
             </div>

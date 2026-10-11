@@ -46,7 +46,7 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 	}
 	defer conn.Release()
 	var providerID, serviceID, batchID string
-	e = conn.QueryRow(ctx, `SELECT provider_id::text,COALESCE(service_id::text,''),COALESCE(triage_batch_id::text,'') FROM ai_runs WHERE workspace_id=$1 AND id::text=$2`, a.WorkspaceID, a.ID).Scan(&providerID, &serviceID, &batchID)
+	e = conn.QueryRow(ctx, `SELECT provider_id::text,COALESCE(service_id::text,''),COALESCE(triage_batch_id::text,automation_batch_id::text,'') FROM ai_runs WHERE workspace_id=$1 AND id::text=$2`, a.WorkspaceID, a.ID).Scan(&providerID, &serviceID, &batchID)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return nil
 	}
@@ -99,8 +99,8 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 		}
 		return err
 	}
-	if purpose == "triage" && batchID == "" {
-		return finishEarly("cancelled", "Triage activity is no longer retained.")
+	if (purpose == "triage" || purpose == "automatic") && batchID == "" {
+		return finishEarly("cancelled", "Automation activity is no longer retained.")
 	}
 	if started != nil {
 		return finishEarly("unknown", "Interrupted after dispatch intent; no automatic paid replay. Verify provider usage before reconciling.")
@@ -126,7 +126,7 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 	if e != nil || input.Digest != digest || payload == nil {
 		return finishEarly("cancelled", "Evidence changed, expired, or became unavailable before dispatch.")
 	}
-	if (purpose == "analysis" || purpose == "triage") && (!aiAllowed(p, input.Service.ID, input.Service.Origin) || p.Capability != "ready") {
+	if (purpose == "analysis" || purpose == "triage" || purpose == "automatic") && (!aiAllowed(p, input.Service.ID, input.Service.Origin) || p.Capability != "ready") {
 		return finishEarly("cancelled", "Service or provider is no longer eligible for AI.")
 	}
 	var encrypted []byte
@@ -162,8 +162,8 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 			case <-ticker.C:
 				var allowed bool
 				err := s.pool.QueryRow(callCtx, `SELECT a.state='analyzing' AND a.expires_at>now() AND (a.service_id IS NULL OR v.revision=$3) FROM ai_runs a LEFT JOIN services v ON v.workspace_id=a.workspace_id AND v.id=a.service_id WHERE a.workspace_id=$1 AND a.id=$2`, a.WorkspaceID, a.ID, input.Service.Revision).Scan(&allowed)
-				if err == nil && allowed && purpose == "triage" {
-					fresh, checkErr := s.buildTriageInput(callCtx, s.pool, a.WorkspaceID, batchID, p)
+				if err == nil && allowed && (purpose == "triage" || purpose == "automatic") {
+					fresh, checkErr := s.invocationInput(callCtx, s.pool, a.WorkspaceID, runID, batchID, purpose, p)
 					allowed = checkErr == nil && fresh.Digest == digest
 				}
 				if err != nil || !allowed {
@@ -241,7 +241,7 @@ func (s *Server) executeAI(ctx context.Context, a aiArgs) error {
 				report, _ = json.Marshal(doc)
 				result.Reason = "AI suggestions validated for structure and evidence scope; causal claims still require review."
 				if ai.IsTriage(purpose) {
-					result.Reason = "Advisory assessment validated for structure and evidence scope; investigations remain manual."
+					result.Reason = "Assessment validated for structure and evidence scope; automation policy controls admission."
 				}
 			}
 		}
@@ -288,6 +288,5 @@ func (s *Server) retainAI(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	_, e = s.pool.Exec(ctx, `DELETE FROM ai_runs WHERE id IN (SELECT id FROM ai_runs WHERE created_at<now()-interval '30 days' AND accounting IN ('settled','reconciled') LIMIT 1000)`)
-	return e
+	return s.pruneLinkedAIHistory(ctx, `DELETE FROM ai_runs WHERE id IN (SELECT id FROM ai_runs WHERE created_at<now()-interval '30 days' AND accounting IN ('settled','reconciled') LIMIT 1000)`)
 }

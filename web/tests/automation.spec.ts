@@ -13,9 +13,10 @@ const at = "2026-10-11T10:00:00Z";
 async function fixture(
   page: Page,
   withTriage = false,
-  options: { savedProvider?: string; beforeAISettings?: () => Promise<void> } = {},
+  options: { savedProvider?: string; beforeAISettings?: () => Promise<void>; automatic?: boolean } = {},
 ) {
   let triageCancelled = false;
+  let automaticCancelled = false;
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
@@ -24,6 +25,8 @@ async function fixture(
   let policy = {
     mode: options.savedProvider ? "triage_only" : "off",
     triage_provider_id: options.savedProvider ?? "",
+    investigation_provider_id: "",
+    automatic_consent: false,
     services: [] as string[],
     allow_demo: false,
     cooldown_minutes: 30,
@@ -38,7 +41,7 @@ async function fixture(
     state,
     reason:
       state === "recommended"
-        ? "Local rules recommend manual investigation. No investigation was started."
+        ? options.automatic ? "Local rules recommend investigation. See the applied admission decision below." : "Local rules recommend manual investigation. No investigation was started."
         : "Service recommendation cooldown is active.",
     policy_revision: 1,
     mapping_revision: 1,
@@ -46,7 +49,8 @@ async function fixture(
     due_at: at,
     evaluated_at: at,
     next_eligible_at: at,
-    triage: withTriage
+    admission: options.automatic ? { status: state === "recommended" ? "launched" : "skipped", reason: state === "recommended" ? "Local rules admitted bounded analysis of the triggering evidence." : "AI budget unavailable, including unresolved reservations.", ai_run_id: state === "recommended" ? "automatic-run" : null, investigation_id: state === "recommended" ? "automatic-report" : null, state: state === "recommended" ? automaticCancelled ? "cancelled" : "queued" : null, run_reason: automaticCancelled ? "Cancelled by administrator." : "Waiting for bounded AI analysis.", model: "fixture-model", accounting: state === "recommended" ? automaticCancelled ? "settled" : "reserved" : null, reserved: 6000, charged: 0 } : undefined,
+    triage: withTriage && !options.automatic
       ? {
           status: triageCancelled ? "cancelled" : "completed",
           reason: "Local recommendation retained.",
@@ -109,6 +113,8 @@ async function fixture(
                 {
                   id: "anthropic-provider",
                   kind: "anthropic",
+                  model: "fixture-model",
+                  capability: "ready",
                   triage_model: "fixture-triage",
                   triage_capability: "ready",
                   enabled: true,
@@ -116,6 +122,10 @@ async function fixture(
               ]
             : [],
         };
+        break;
+      case "/api/v1/ai/runs/automatic-run/cancel":
+        automaticCancelled = true;
+        body = { ok: true };
         break;
       case "/api/v1/ai/runs/triage-run/cancel":
         triageCancelled = true;
@@ -436,7 +446,7 @@ test("AI triage consent persists and model advice stays separate from local rule
     "Investigate recommended",
   );
   await expect(page.locator(".automation-entry")).toContainText(
-    "choose whether to investigate manually",
+    "Automatic admission,",
   );
   await page.evaluate(() => {
     (document.activeElement as HTMLElement)?.blur();
@@ -473,5 +483,57 @@ test("AI triage consent persists and model advice stays separate from local rule
     page.getByRole("combobox", { name: "Triage provider", exact: true }),
   ).toHaveValue("");
   expect(await page.locator("vite-error-overlay").count()).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+
+test("automatic investigations require consent, persist selection, expose admission and pause", async ({ page }) => {
+  const errors = await fixture(page, true, { automatic: true });
+  await page.goto("/settings#automation");
+  await expect(page).toHaveTitle(/Sherlock/i);
+  const mode = page.getByRole("combobox", { name: "Mode", exact: true });
+  const provider = page.getByRole("combobox", { name: "Investigation provider", exact: true });
+  const consent = page.getByLabel("Allow recurring automatic investigations and paid AI analysis");
+  await expect(mode).toHaveValue("off");
+  await expect(consent).not.toBeChecked();
+  await mode.selectOption("auto_investigate");
+  await provider.selectOption("anthropic-provider");
+  await page.getByRole("checkbox", { name: "checkout-service · Simulated" }).check();
+  await page.getByLabel("Include simulated demo findings").check();
+  await page.getByRole("button", { name: "Save automation settings" }).click();
+  expect(await consent.evaluate((el) => (el as HTMLInputElement).validity.valueMissing)).toBeTruthy();
+  await consent.check();
+  await page.getByRole("button", { name: "Save automation settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Automation settings saved");
+  await page.reload();
+  await expect(mode).toHaveValue("auto_investigate");
+  await expect(provider).toHaveValue("anthropic-provider");
+  await expect(consent).toBeChecked();
+  await page.locator(".automation-entry summary").click();
+  await expect(page.getByText("Automatic admission · launched")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open automatic investigation" })).toHaveAttribute("href", "/investigations?id=automatic-report");
+  await page.getByRole("button", { name: "Cancel automatic analysis" }).click();
+  await expect(page.getByText("Cancelled by administrator.")).toBeVisible();
+  await page.getByRole("button", { name: "Load older activity" }).click();
+  await expect(page.locator(".automation-entry")).toHaveCount(2);
+  await page.locator(".automation-entry summary").last().click();
+  await expect(page.getByText("AI budget unavailable, including unresolved reservations.")).toBeVisible();
+  await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
+  await page.screenshot({ path: "/tmp/sherlock-automation/automatic-desktop.png", fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: "/tmp/sherlock-automation/automatic-mobile.png", fullPage: true, animations: "disabled" });
+  await mode.selectOption("triage_only");
+  await page.getByRole("button", { name: "Save automation settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Automation settings saved");
+  await page.reload();
+  await expect(mode).toHaveValue("triage_only");
+  await mode.selectOption("off");
+  await page.getByRole("button", { name: "Save automation settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Automation settings saved");
+  await page.reload();
+  await expect(mode).toHaveValue("off");
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   expect(errors).toEqual([]);
 });

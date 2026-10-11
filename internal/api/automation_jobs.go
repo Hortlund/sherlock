@@ -32,7 +32,7 @@ func (w *automationWorker) Work(ctx context.Context, j *river.Job[automationArgs
 }
 
 // Called with the service/finding locks held by the finding publication transaction.
-// No external calls or investigation jobs are made by the recommendation pipeline.
+// External calls run separately; admission is queued only under explicit automatic consent.
 func (s *Server) automationObservation(ctx context.Context, tx pgx.Tx, ws string, v Service, finding string, isNew bool, at time.Time, c detectors.Candidate) error {
 	m, valid := automation.Measure(c)
 	if !valid {
@@ -132,7 +132,7 @@ func (s *Server) automationClearMissing(ctx context.Context, tx pgx.Tx, ws strin
 	}
 	_, e = tx.Exec(ctx, `UPDATE automation_items i SET cleared_at=$4
  FROM automation_batches b,findings f
- WHERE b.id=i.batch_id AND b.workspace_id=i.workspace_id AND (b.state='pending' OR EXISTS(SELECT 1 FROM ai_runs a WHERE a.id=b.ai_run_id AND a.state IN ('queued','analyzing')))
+ WHERE b.id=i.batch_id AND b.workspace_id=i.workspace_id AND (b.state='pending' OR b.admission_status='pending' OR EXISTS(SELECT 1 FROM ai_runs a WHERE (a.id=b.ai_run_id OR a.id=b.automatic_ai_run_id) AND a.state IN ('queued','analyzing')))
  AND f.id=i.finding_id AND f.workspace_id=i.workspace_id
  AND b.workspace_id=$1 AND b.service_id=$2 AND b.mapping_revision=$3
  AND i.observed_at<$4 AND (i.cleared_at IS NULL OR i.cleared_at<$4)
@@ -301,7 +301,7 @@ func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error
 					reason = "Service recommendation cooldown is active."
 				} else {
 					rec = "investigate"
-					reason = "Meaningful detector-backed change; manual investigation recommended."
+					reason = "Meaningful detector-backed change; investigation recommended."
 					recommended = true
 				}
 			}
@@ -326,7 +326,7 @@ func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error
 	}
 	if recommended {
 		state = "recommended"
-		reason = "Local rules recommend manual investigation. No investigation was started."
+		reason = "Local rules recommend investigation. See the applied admission decision below."
 		eligible := now.Add(time.Duration(p.CooldownMinutes) * time.Minute)
 		next = &eligible
 		if _, e = tx.Exec(ctx, `INSERT INTO automation_services(workspace_id,service_id,next_eligible_at) VALUES($1,$2,$3) ON CONFLICT(workspace_id,service_id) DO UPDATE SET next_eligible_at=EXCLUDED.next_eligible_at`, a.WorkspaceID, service, next); e != nil {
@@ -336,9 +336,23 @@ func (s *Server) evaluateAutomation(ctx context.Context, a automationArgs) error
 	if _, e = tx.Exec(ctx, `UPDATE automation_batches SET state=$3,reason=$4,evaluated_at=$5,next_eligible_at=$6 WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.BatchID, state, reason, now, next); e != nil {
 		return e
 	}
+	if !recommended && p.Mode == "auto_investigate" {
+		if _, e = tx.Exec(ctx, `UPDATE automation_batches SET admission_status='skipped',admission_reason='Local rules did not recommend investigation; see the finding eligibility and cooldown reasons.' WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.BatchID); e != nil {
+			return e
+		}
+	}
 	if recommended {
 		if e = s.enqueueTriage(ctx, tx, a.WorkspaceID, a.BatchID, p); e != nil {
 			return e
+		}
+		if p.Mode == "auto_investigate" && p.AutomaticConsent {
+			job, err := s.jobs.InsertTx(ctx, tx, automaticArgs{a.WorkspaceID, a.BatchID}, &river.InsertOpts{Queue: "automation", MaxAttempts: 10})
+			if err != nil {
+				return err
+			}
+			if _, e = tx.Exec(ctx, `UPDATE automation_batches SET admission_status='pending',admission_reason='Waiting for triage and automatic admission checks.',admission_job_id=$3 WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.BatchID, job.Job.ID); e != nil {
+				return e
+			}
 		}
 	}
 	return tx.Commit(ctx)
@@ -370,6 +384,8 @@ func (s *Server) retainAutomation(ctx context.Context) error {
 			return e
 		}
 	}
-	_, e = s.pool.Exec(ctx, `DELETE FROM automation_batches WHERE id IN (SELECT id FROM automation_batches WHERE state<>'pending' AND created_at<now()-interval '30 days' LIMIT 1000)`)
-	return e
+	if e = s.retainAutomatic(ctx); e != nil {
+		return e
+	}
+	return s.pruneLinkedAIHistory(ctx, `DELETE FROM automation_batches WHERE id IN (SELECT id FROM automation_batches WHERE state<>'pending' AND created_at<now()-interval '30 days' LIMIT 1000)`)
 }

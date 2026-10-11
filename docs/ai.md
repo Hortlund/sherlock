@@ -1,6 +1,6 @@
 # OpenAI and Anthropic analysis
 
-Phase 2 Slice B adds an optional structured analysis of an already completed investigation. Both providers use the same report shape: observations, hypotheses with supporting/contradicting evidence, unknowns, and manual checks. The deterministic report remains available. Optional OpenAI/Anthropic proactive triage is also available; see [automation setup](automation.md). OpenAI Decisions, automatic investigations, new telemetry tools, report conversations and inbound triggers remain planned.
+Phase 2 Slice B adds an optional structured analysis of an already completed investigation. Both providers use the same report shape: observations, hypotheses with supporting/contradicting evidence, unknowns, and manual checks. The deterministic report remains available. Optional OpenAI/Anthropic proactive triage is also available; see [automation setup](automation.md). Opt-in automatic admission reuses bounded analysis of triggering evidence. OpenAI Decisions, new telemetry tools, report conversations and inbound triggers remain planned.
 
 ## Set up a provider
 
@@ -37,7 +37,7 @@ At dispatch, the worker rebuilds and verifies the compact payload against the ad
 - A workspace advisory lock serializes reservations against the daily/per-run allowance. The daily total includes all outstanding or ambiguous reservations, even from prior days. Actual known usage settles the configured estimate. If reported usage exceeds the estimate/cap, account for it, withhold the report and require a new capability test. The budget is admission control, not a guarantee about the provider invoice. Configure provider account spending controls as appropriate.
 - Network loss, interrupted dispatch, 408/5xx, missing or malformed usage keep the reservation. HTTP rejection such as 401/429 settles zero. Refused/truncated/invalid reports still account for known usage. There is no automatic paid retry. A worker recovering after persisted dispatch intent marks the outcome unknown instead of calling again.
 - For a finished uncertain run older than four minutes, inspect its time/request ID in the provider account, then use **Reconcile verified provider charge** to record the verified USD amount. This is an audited administrator assertion, not automatic billing reconciliation. Costs are attributed to the invocation's original UTC day.
-- Successful unexpired reports can be reused without another call; lookup includes evidence/request digest, provider revision, policy revision and prompt/schema content, and revalidates current evidence. **Request fresh analysis** explicitly bypasses a saved success but never an active equivalent run or budget/privacy checks.
+- Successful unexpired reports can be reused without another call; lookup includes evidence/request digest, provider revision, policy revision and prompt/schema content, and revalidates current evidence. Completed automatic analysis is also eligible for manual reuse under these same checks, even after Automation is switched Off; its original purpose and accounting remain intact. **Request fresh analysis** explicitly bypasses a saved success but never an active equivalent run or budget/privacy checks. Active automatic tasks remain governed by automation policy and block a second manual task until they finish.
 
 Cancellation stops queued work and requests cancellation of active HTTP. Disablement/provider edits cancel outstanding runs; disabling workspace AI or editing/deleting a provider also removes its local generated content. A final check prevents publishing stale or revoked results. A request already transmitted may still be charged.
 
@@ -61,3 +61,8 @@ An optional triage model and its own input/output prices share the encrypted pro
 API additions: `POST /api/v1/ai/providers/{id}/triage-preview` returns a synthetic request without sending it; `POST /api/v1/ai/providers/{id}/triage-test` requires `confirm:true` and reserves a potentially paid test. Provider configuration adds `triage_model`, `triage_input_price`, `triage_output_price` and read-only `triage_capability`. Automation selects `triage_provider_id` (empty means local rules only).
 
 Official protocol references checked for this implementation: [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses) and [Anthropic structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs). Live model/account availability and output usefulness still require deployment evaluation; fixture success does not establish those.
+
+
+## Automatic admission
+
+Automation can explicitly opt into recurring investigation analysis with a separately selected, tested investigation provider. It reuses this single-invocation engine, budget ledger, privacy/excerpt controls, cancellation and uncertain-outcome accounting. Runs have purpose `automatic` and link to a deterministic report built from the qualifying scan evidence. They make no telemetry or tool calls. See [automatic setup and policy](automation.md#opt-in-automatic-investigations). Existing manual or triage consent does not enable automatic investigations.

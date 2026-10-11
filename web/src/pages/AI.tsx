@@ -598,7 +598,7 @@ function ProviderForm({
         <p>
           Use a separate model for compact proactive assessments. Configure
           prices, run its synthetic test, then opt in under Automation.
-          Investigations stay manual.
+          Automatic investigations require separate opt-in in Automation settings.
         </p>
         <Field
           label="Triage model ID"

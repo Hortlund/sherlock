@@ -261,3 +261,63 @@ Verification:
 - Updated AI/automation operations, decisions and the Phase 2 plan with the lock ordering. This fix changes no frontend code, so browser tests were not repeated; the previous 22-test Chromium result remains the last browser verification.
 
 Investigations remain manual. Provider responses were fixtures; no paid calls or external messages were sent. The disposable test database was removed after verification. Changes remain uncommitted.
+
+## 2026-10-11 — Opt-in automatic investigation admission
+
+Implemented the third Slice C increment. Automation now offers Off, Recommendations only and Automatic investigations. Automatic mode requires separate recurring consent and a tested investigation provider with positive workspace/per-run budgets and prices. Existing installations remain Off or retain their previous recommendation settings; the user's installation was not enabled.
+
+A durable admission job waits for optional triage, follows valid investigate advice, skips other valid advice, respects cancellation and falls back to local rules when triage is unavailable. It rechecks scope, policy, monitoring, lifecycle/recovery, mapping, source availability, evidence freshness and provider consent. Admission atomically creates a deterministic report from the triggering scan evidence, reserves budget, queues Slice B analysis, records audit/report-ready events and sets a separate service investigation cooldown. There is one active AI task per service and no paid replay. The existing worker rechecks eligibility at dispatch, during HTTP and at publication. Activity separates local recommendations, AI advice and applied admission, including specific skip reasons, links, accounting and cancellation.
+
+This is existing-evidence analysis: one provider attempt, 12,000 estimated input / 2,048 output tokens and 180 seconds from enqueue. Fresh telemetry collection, tools and report follow-up remain Slice D. Migration 010 is additive; earlier migrations and archived specifications are unchanged. Updated the active spec, plan, OpenAPI, README, operations and decisions.
+
+Verification:
+
+- Full `make lint test` passed: formatting, Go vet, TypeScript, race-enabled unit tests and the PostgreSQL integration suite (359.116 seconds). Existing provider, automation, privacy/concurrency, notification, retention, secret rotation and backup/restore regressions passed.
+- After improving eligibility explanations and skipped-activity labeling, the final focused race-enabled `TestAutomatic|TestTriageDispatchRevocation` run passed (142.651 seconds). New integration coverage includes both providers, explicit consent/capability requirements, concurrent/restarted admission and single paid execution, triage investigate/observe/refusal/cancellation, budgets and unknown reservations, cooldown/active-run exclusion, scope and lifecycle revocation before dispatch, revocation during provider HTTP with content withheld and accounting settled, injected transaction rollback, cross-workspace arguments, a real River admission-to-analysis execution, actual healthy-scan recovery and skipped recommendation labeling.
+- Initial focused failures were test-only: the notification assertion used `type` instead of `kind`. The browser test clicked a history summary before pagination completed; waiting for the second entry fixed it. No application workaround was needed.
+- All 23 Chromium tests passed via `make e2e` (56.8 seconds). The new automatic-mode journey verifies default Off, mandatory consent, provider/service/demo selection, save/reload, launched/skipped reasons, report link, cancellation, Recommendations only and Off. A final focused browser rerun passed after making fixture activity consistent with the local-rules policy.
+- Browser plugin not available; used repository Playwright at `http://127.0.0.1:18080`, with 1536×1024 desktop and 390×844 mobile viewports. Page identity, meaningful content, framework-overlay absence, console health and interactions passed. Inspected screenshots under `/tmp/sherlock-automation/automatic-desktop.png` and `automatic-mobile.png`; controls and activity remain readable with no document overflow.
+- OpenAPI parsed with 55 paths and 388 local references resolved; 42 relative documentation links resolved. `git diff --check` passed. The optional Decisions adapter and live model-usefulness evaluation remain unfinished Slice C work.
+- Started Docker because its daemon was stopped, then rebuilt the existing app. App/PostgreSQL are healthy, `/readyz` returns ready and migration 010 is applied. The existing administrator, service and two connections are preserved; there is still no saved automation policy, so defaults remain Off. No credentials or provider/notification configuration were changed.
+
+Provider/delivery responses were fixtures; no paid calls or external messages were made. Live provider/notification smoke tests and versioned usefulness, factual-error, miss-rate, cost and latency evaluation remain rollout gates. Safari/Firefox and the separate real-source suite were not repeated because telemetry adapters are unchanged. Changes remain uncommitted for review.
+
+Final cleanup: removed the disposable test database container/network after verification. Restored the existing stopped demo source after starting Docker. The final app rebuild and readiness check passed; automation remains Off.
+
+
+## 2026-10-11 — Automatic admission bug and concurrency review
+
+Fixed three reproduced issues while preserving explicit opt-in and default Off:
+
+- Late triage cancel/delete requests previously returned success after completion but still allowed automatic admission, or left an already-admitted child running. Forward migration 011 persists cancellation intent independently of terminal state. Admission and cancellation serialize through accounting; active child runs are cancelled, cancelled assessments cannot be reused from cache, and activity shows the explicit stop request. Completed history and incurred/unknown accounting are retained.
+- Automation policy saves previously changed only the revision, leaving queued/analyzing rows active until a worker recheck. Saves now take workspace scope, policy and accounting locks and cancel active triage/automatic tasks atomically with the revision. Manual analysis and capability tests are unaffected. A saved Off is visible to the final dispatch-state check even when it commits after dispatch intent.
+- Concurrent batch and AI history deletion deadlocked through circular foreign-key updates. Both bounded delete paths now acquire the same transaction advisory lock before touching either side. Content expiry, cooldowns and unresolved reservations keep their existing retention rules.
+
+Verification:
+
+- Final `make lint test` passed: formatting, Go vet, TypeScript and the full race-enabled Go/PostgreSQL suites (API integration: 369.611 seconds). The 14 new regression cases cover late cancellation, admission/revocation ordering, the final dispatch boundary, immediate policy cancellation/accounting and concurrent retention. Existing provider, privacy/mapping lock, budget, notifications, migration, retention and backup/restore regressions passed.
+- The original six late cancel/delete and immediate Off-state cases failed before fixes (14.661 seconds) and passed afterward (15.310 seconds). The forced concurrent retention regression reproduced PostgreSQL `40P01` before the fix (3.753 seconds) and passed afterward (3.769 seconds).
+- Expanded late cancel/delete tests include in-flight response withholding with actual fixture usage preserved. Real admission and cancellation/Off HTTP requests are queued behind a database barrier in both orders; observed lock waits prove overlap. This focused race-enabled run passed (24.710 seconds).
+- A pgx tracing barrier pauses the real worker after committed dispatch intent and before its final HTTP check. Saving Off cancels the row and no provider transport is called. This test and the existing triage budget/consent/cache regressions passed (12.577 seconds). Deleting cached triage content now shows cancelled activity rather than unavailable fallback.
+- OpenAPI parses with 55 paths and 388 resolved references. Archived specifications and previously applied migrations are unchanged; `git diff --check` passed. No frontend code changed in this review.
+
+- Rebuilt the existing local app successfully. App/PostgreSQL are healthy, `/readyz` returns ready and migration 011 is applied. The existing administrator, service and two connections are preserved; there is still no saved automation policy, so automation remains Off. Removed the disposable test database container/network after verification.
+
+Browser tests were not repeated because this review changed no frontend code; the previous 23-test Chromium pass remains the latest browser verification. Provider responses used fixture transports, with no paid calls or real external messages. Changes remain uncommitted.
+
+
+## 2026-10-11 — Automatic-to-manual result reuse fix
+
+Fixed the reviewed cache regression: a manual analysis request can reuse a completed automatic result under the existing workspace, provider/revision, AI-policy revision, evidence/request digest, report-retention and expiry checks. Reuse returns the original run without creating a reservation, River job or provider call, preserving automatic provenance and accounting. Explicit fresh requests still create manual analysis, and active automatic tasks continue to exclude a second task for the service. This changes no automation defaults, consent requirements or schema.
+
+Verification:
+
+- The new OpenAI and Anthropic regression failed before the fix: each manual request returned a different ID with `reused:false` (race-enabled run: 4.863 seconds).
+- All eight new PostgreSQL regression scenarios passed after the fix (race-enabled focused run: 20.447 seconds). Both providers reuse the completed automatic ID without changing jobs, ledger totals or fixture call count. Reuse works after saving Off and revoking automatic consent; explicit fresh analysis makes exactly one additional manual call and leaves automation Off. Active automatic tasks reject duplicate manual requests with either fresh setting.
+- Eligibility regressions cover expired/deleted results, AI policy changes, provider/model changes, expired evidence and revoked service consent. Invalid cache entries are replaced only through normal manual admission; evidence/egress revocation rejects the request without ledger changes. The initial evidence-expiry fixture was corrected to use PostgreSQL's native text-array expansion.
+- Rebuilt the existing local app with the fix. App/PostgreSQL are healthy, `/readyz` returns ready, and the administrator, service and two connections remain present. No saved automation policy exists, so the installation remains Off. No new migration was needed.
+- Final `make lint test` passed: formatting, Go vet, TypeScript, race-enabled unit tests and the full PostgreSQL API integration suite (398.052 seconds). Existing manual reuse, provider, budget, privacy, opt-in, concurrency, retention, notifications and backup/restore coverage passed. `git diff --check` passed; earlier migrations and archived specs are unchanged.
+
+No frontend code or provider protocol changed, so browser/live-provider tests were not repeated. All provider responses were fixtures; no paid calls or real external messages were sent. Changes remain uncommitted.
+
+Removed the disposable test database container/network after verification.

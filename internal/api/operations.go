@@ -47,6 +47,24 @@ func (s *Server) connectionLabels(w http.ResponseWriter, r *http.Request) {
 	s.json(w, 200, map[string]any{"labels": out, "limited": len(labels) >= 100})
 }
 
+// AI runs and automation batches reference each other with ON DELETE SET NULL.
+// Serialize their bounded history deletes across replicas before locking either
+// table, otherwise opposite delete orders can deadlock through those FKs.
+func (s *Server) pruneLinkedAIHistory(ctx context.Context, statement string) error {
+	tx, e := s.pool.Begin(ctx)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback(ctx)
+	if _, e = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(73190005)`); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, statement); e != nil {
+		return e
+	}
+	return tx.Commit(ctx)
+}
+
 // Erase expired payloads while retaining tombstones for finding/report citations.
 func (s *Server) Retain(ctx context.Context) error {
 	if e := s.retainAutomation(ctx); e != nil {

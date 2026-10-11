@@ -1,6 +1,6 @@
 # Phase 2 implementation plan
 
-Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; optional OpenAI/Anthropic advisory triage is implemented; automatic runs and Slices D–E remain planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
+Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; optional OpenAI/Anthropic advisory triage is implemented; opt-in automatic admission is implemented; Slices D–E remain planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
 
 The delivered workspace now groups configuration into dedicated Settings sections and separates investigation Report, AI analysis and Run activity views. Editors use focused drawers; the existing A/B workflows remain covered by browser regressions. See [interface direction](design/README.md) and [progress](progress.md).
 
@@ -79,13 +79,15 @@ Delivered scope: one investigation model per provider; triage-role selection bel
 
 Delivered first increment, per the user's recommendation-first choice: **Off / Recommendations only** settings, explicit service/demo selection, deterministic material-change rules, durable 60-second service grouping, recommendation cooldowns, and paginated activity with per-finding reasons. This increment never starts investigations or calls models. Defaults are Off, no selected services, demo excluded, 30-minute cooldown and 2× growth plus the detector's absolute minimum. Settings revisions reset comparison baselines without replaying a backlog. See [automation setup and rules](automation.md).
 
-Delivered second increment: optional OpenAI Responses/Anthropic Messages triage with a separate configured/tested model role, explicit recurring consent, shared budget reservations, bounded structured decisions, scoped result reuse, cancellation and per-activity AI advice. Local rules and factual alerts stay independent; all investigations remain manual. See [automation operations](automation.md).
+Delivered second increment: optional OpenAI Responses/Anthropic Messages triage with a separate configured/tested model role, explicit recurring consent, shared budget reservations, bounded structured decisions, scoped result reuse, cancellation and per-activity AI advice. Local rules and factual alerts stay independent; investigations remain manual in Recommendations only mode. See [automation operations](automation.md).
 
-Remaining work below includes the optional OpenAI Decisions endpoint, live usefulness evaluation and automatic execution; full Slice C is not complete.
+Delivered third increment: opt-in automatic admission with explicit recurring consent and a separately tested investigation provider. Durable admission waits for optional triage, applies server policy, then atomically builds a deterministic report from triggering evidence and reserves/enqueues Slice B analysis. Activity exposes launched/skipped reasons, links, accounting and cancellation. Scope/privacy/lifecycle/recovery checks apply before dispatch and publication; defaults remain Off. See automation operations and progress for actual verification.
+
+Remaining Slice C work includes the optional OpenAI Decisions endpoint and live usefulness evaluation; full Slice C is not complete.
 
 Review fixes in the local-rules increment: complete healthy scans invalidate pending signals, freshness is bounded by the actual observation as well as batch age, current Monitoring settings are rechecked at evaluation, and finding history links ignore retained list filters/cursors. Recovery skips preserve evidence and do not consume cooldowns. Forward migration 008 records recovery timestamps.
 
-Advisory triage review fixes include shared workspace scope guards before service/rule locks and AI accounting at admission, dispatch and publication. Concurrent mapping edits and accounting writes must complete without deadlocks; investigations remain manual. Actual regression results are recorded in [progress](progress.md).
+Advisory triage review fixes include shared workspace scope guards before service/rule locks and AI accounting at admission, dispatch and publication. Concurrent mapping edits and accounting writes must complete without deadlocks; the same lock order applies to automatic admission. Actual regression results are recorded in [progress](progress.md). Automatic-admission review adds durable late cancellation, atomic cancellation on policy saves, and serialized linked-history deletion across replicas. Forward migration 011 preserves cancellation intent; defaults remain Off. Completed automatic reports can also satisfy equivalent manual analysis requests without another paid call; explicit fresh requests and all cache/privacy checks remain enforced.
 
 Implement deterministic routing plus optional OpenAI Decisions and structured classification through OpenAI/Anthropic. Normalize only supported answer types; map refusal/incomplete/error to rules fallback. Record model recommendation separately from the server's applied action/reason.
 
@@ -148,7 +150,8 @@ Slice B review fixes cover stale provider previews, access to older unresolved c
 - [x] B: both providers, reactive structured reports, privacy, and budgets verified with local fixtures.
 - [x] C, first increment: local recommendations, durable rules/cooldowns and activity history.
 - [x] C, second increment: OpenAI/Anthropic advisory triage, scoped reuse, budget admission and fixture scenarios.
-- [ ] C, remaining: optional Decisions endpoint, live usefulness evaluation and automatic investigation admission.
+- [x] C, third increment: opt-in automatic investigation admission using bounded existing-evidence analysis.
+- [ ] C, remaining: optional Decisions endpoint and live usefulness evaluation.
 - [ ] D: tool loop, restart safety, evaluations, and follow-up verified.
 - [ ] E: signed inbound trigger pipeline verified.
 - [x] Existing deterministic demo and all prior regression cases still pass.

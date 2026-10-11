@@ -205,7 +205,7 @@ func TestTriageBudgetConsentAndCache(t *testing.T) {
 				requireCode(t, call(h, "POST", "/api/v1/ai/runs/"+id+"/delete", map[string]any{}, c, csrf, s.cfg.Origin), 200)
 				w := call(h, "GET", "/api/v1/automation/activity", nil, c, "", "")
 				requireCode(t, w, 200)
-				if strings.Contains(w.Body.String(), `"decision"`) || !strings.Contains(w.Body.String(), `"status":"unavailable"`) {
+				if strings.Contains(w.Body.String(), `"decision"`) || !strings.Contains(w.Body.String(), `"status":"cancelled"`) {
 					t.Fatal("deleted content retained", w.Body.String())
 				}
 				return

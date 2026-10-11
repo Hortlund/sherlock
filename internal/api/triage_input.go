@@ -47,16 +47,32 @@ func (s *Server) invocationInput(ctx context.Context, q aiDB, ws, run, batch, pu
 	if ai.IsTriage(purpose) {
 		return s.buildTriageInput(ctx, q, ws, batch, p)
 	}
+	if purpose == "automatic" {
+		if batch == "" {
+			return aiInput{}, errors.New("Automatic activity is no longer retained.")
+		}
+		if _, e := s.buildRecommendationInput(ctx, q, ws, batch, p, true); e != nil {
+			return aiInput{}, e
+		}
+	}
 	return s.buildAIInput(ctx, q, ws, run, p)
 }
 
 // Triage transmits numbers, detector names and opaque IDs only. No service names,
 // log fingerprints, excerpts, selectors, URLs, or user-authored text are copied.
 func (s *Server) buildTriageInput(ctx context.Context, q aiDB, ws, batch string, p AIProvider) (aiInput, error) {
+	return s.buildRecommendationInput(ctx, q, ws, batch, p, false)
+}
+
+type recommendationUnavailable string
+
+func (e recommendationUnavailable) Error() string { return string(e) }
+
+func (s *Server) buildRecommendationInput(ctx context.Context, q aiDB, ws, batch string, p AIProvider, automatic bool) (aiInput, error) {
 	out := aiInput{Expires: time.Now().Add(24 * time.Hour), IDs: []string{}}
 	payload := triagePayload{Version: ai.TriageVersion, Origin: "demo", Signals: []triageSignal{}}
 	revision := 0
-	bad := errors.New("Triage evidence or recommendation is no longer eligible; local recommendation remains available.")
+	bad := recommendationUnavailable("Supporting evidence is missing, incomplete, expired, oversized or unavailable from its source.")
 	if batch == "" {
 		out.IDs = []string{"synthetic-evidence"}
 		payload.Signals = []triageSignal{{ID: "synthetic-finding", Detector: "error_rate", Severity: "warning", Current: .12, Baseline: .01, Unit: "error_proportion", CurrentMinutes: 15, BaselineMinutes: 60, EvidenceIDs: out.IDs}}
@@ -75,8 +91,27 @@ func (s *Server) buildTriageInput(ctx context.Context, q aiDB, ws, batch string,
 		if e != nil {
 			return out, e
 		}
-		if state != "recommended" || time.Since(created) > 15*time.Minute || revision != policy.Revision || policy.Mode != "triage_only" || policy.TriageProviderID != p.ID || !slices.Contains(policy.Services, sid) || !v.Monitoring || mapping != v.Revision || (v.Origin == "demo" && !policy.AllowDemo) || !aiAllowed(p, sid, v.Origin) {
-			return out, bad
+		providerAllowed := policy.TriageProviderID == p.ID && policy.Mode != "off"
+		if automatic {
+			providerAllowed = policy.Mode == "auto_investigate" && policy.AutomaticConsent && policy.InvestigationProviderID == p.ID
+		}
+		switch {
+		case state != "recommended":
+			return out, recommendationUnavailable("Local rules did not recommend investigation.")
+		case time.Since(created) > 15*time.Minute:
+			return out, recommendationUnavailable("Recommendation expired after 15 minutes; old work is not replayed.")
+		case revision != policy.Revision || !providerAllowed:
+			return out, recommendationUnavailable("Automation policy, selected provider or recurring consent changed.")
+		case !slices.Contains(policy.Services, sid):
+			return out, recommendationUnavailable("Service is no longer selected for automation.")
+		case !v.Monitoring:
+			return out, recommendationUnavailable("Scheduled monitoring is disabled for this service.")
+		case mapping != v.Revision:
+			return out, recommendationUnavailable("Service mapping changed; a fresh observation is required.")
+		case v.Origin == "demo" && !policy.AllowDemo:
+			return out, recommendationUnavailable("Simulated demo findings are excluded from automation.")
+		case !aiAllowed(p, sid, v.Origin):
+			return out, recommendationUnavailable("Provider service or demo consent does not allow this evidence.")
 		}
 		out.Service = v
 		payload.Origin = v.Origin
@@ -108,7 +143,18 @@ func (s *Server) buildTriageInput(ctx context.Context, q aiDB, ws, batch string,
 		for _, i := range items {
 			c := i.Details
 			current, valid := automation.Measure(detectors.Candidate{Detector: c.Detector, Thresholds: cfg})
-			if !valid || current.Key != i.Measurement.Key || slices.Contains(cfg.Disabled, c.Detector) || i.Cleared != nil || i.Last.After(i.At) || time.Since(i.At) > 15*time.Minute || (i.State != "new" && i.State != "acknowledged") || len(i.Evidence) == 0 {
+			switch {
+			case !valid || current.Key != i.Measurement.Key || slices.Contains(cfg.Disabled, c.Detector):
+				return out, recommendationUnavailable("Monitoring detector, windows or thresholds changed.")
+			case i.Cleared != nil:
+				return out, recommendationUnavailable("A newer complete scan no longer qualifies for this signal.")
+			case i.Last.After(i.At):
+				return out, recommendationUnavailable("A newer finding observation superseded this recommendation.")
+			case time.Since(i.At) > 15*time.Minute:
+				return out, recommendationUnavailable("Scan observation is older than 15 minutes.")
+			case i.State != "new" && i.State != "acknowledged":
+				return out, recommendationUnavailable("Finding is snoozed, dismissed or resolved.")
+			case len(i.Evidence) == 0:
 				return out, bad
 			}
 			baseline := c.Baseline
@@ -146,7 +192,7 @@ func (s *Server) buildTriageInput(ctx context.Context, q aiDB, ws, batch string,
 		return out, e
 	}
 	out.Bound = len(wire) + 1024
-	if out.Bound > ai.TriageInputLimit {
+	if !automatic && out.Bound > ai.TriageInputLimit {
 		return out, errors.New("Triage summary exceeds the compact input limit; local recommendation remains available.")
 	}
 	sum := sha256.Sum256(append(wire, []byte(":"+strconv.Itoa(p.Revision)+":"+strconv.Itoa(revision))...))

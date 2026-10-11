@@ -6,7 +6,7 @@ Sherlock is a self-hosted investigation tool for developers and operators runnin
 
 Connect your existing telemetry, map a service, and investigate a finding. Add **OpenAI or Anthropic** for optional AI analysis, and send alerts to **Slack, Discord, or a webhook receiver**.
 
-**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations with optional AI triage. Automatic AI runs, multi-step investigations, and inbound alert triggers are on the roadmap. The current installation supports one administrator and one workspace.
+**Status:** Working MVP with outbound notifications, manually requested AI analysis, and proactive investigation recommendations with optional AI triage. Opt-in automatic analysis is implemented; multi-step investigations and inbound alert triggers remain on the roadmap. The current installation supports one administrator and one workspace.
 
 ## From signals to next steps
 
@@ -84,8 +84,8 @@ The next steps build on the same evidence, privacy, and budget controls. These a
 | Outbound notifications | Implemented · Phase 2 A | Slack, Discord, signed webhooks, routing filters, quiet hours, retries, and delivery history. |
 | Reactive AI analysis | Implemented · Phase 2 B | OpenAI/Anthropic setup, payload previews, manual analysis, evidence references, usage tracking, cancellation, and budgets. |
 | Proactive rules and activity | Implemented · First part of Phase 2 C | Local investigation recommendations, selected services, 60-second grouping, persistent cooldowns and an activity history that explains recommendations and skips. |
-| AI triage | Implemented · Phase 2 C | Optional OpenAI/Anthropic assessments, separate model roles, bounded spend and reusable decisions. Investigations remain manual. |
-| Automatic investigation | Next · Remaining Phase 2 C | Explicitly enabled automatic analysis within privacy, budget and concurrency limits; optional OpenAI Decisions adapter. |
+| AI triage | Implemented · Phase 2 C | Optional OpenAI/Anthropic assessments, separate model roles, bounded spend and reusable decisions. Automatic execution requires separate consent. |
+| Automatic investigation | Implemented · Phase 2 C | Explicit opt-in, bounded analysis of triggering evidence, admission history, privacy/budget/concurrency gates. Optional Decisions and live usefulness evaluation remain planned. |
 | Investigation tools and follow-up | Planned · Phase 2 D | Let AI request approved, bounded, read-only telemetry lookups across multiple steps, then support follow-up questions with cumulative cost and time limits. |
 | Inbound alert triggers | Planned · Phase 2 E | Accept signed alerts from external systems, prevent replay/duplicates, and start investigations within administrator-configured service boundaries. |
 
@@ -138,3 +138,6 @@ For local Go development, export `DATABASE_URL`, `SHERLOCK_ENCRYPTION_KEY`, `SHE
 - [OpenAPI](docs/openapi.yaml) — implemented HTTP API.
 - [Architecture decisions](docs/decisions.md) — implementation choices and tradeoffs.
 - [Archived specifications](INFRA_SHERLOCK_CODEX_KIT/reference/README.md) — the original vision and earlier MVP scope, preserved for reference.
+
+
+Automatic investigations are available as a separate opt-in under **Settings → Automation**. Select a tested investigation provider and explicitly consent to recurring paid analysis for selected services. They analyze the triggering scan evidence with existing budgets and privacy controls; Off remains the default. See [setup, admission policy and rollout gates](docs/automation.md#opt-in-automatic-investigations).
