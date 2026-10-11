@@ -1,3 +1,4 @@
+import { InboundSettings } from "./InboundSettings";
 import { AISettings } from "./AI";
 import { AutomationSettings } from "./Automation";
 import { NotificationSettings } from "./NotificationSettings";
@@ -336,6 +337,7 @@ const settingsSections = [
   { id: "ai-settings", label: "AI providers" },
   { id: "automation", label: "Automation" },
   { id: "notifications", label: "Notifications" },
+  { id: "inbound", label: "Inbound alerts" },
   { id: "system", label: "System" },
 ];
 export function SettingsPage() {
@@ -389,6 +391,7 @@ export function SettingsPage() {
         {selected === "ai-settings" ? <AISettings /> : null}
         {selected === "automation" ? <AutomationSettings /> : null}
         {selected === "notifications" ? <NotificationSettings /> : null}
+        {selected === "inbound" ? <InboundSettings /> : null}
         {selected === "system" ? <SystemSettings /> : null}
       </div>
     </>

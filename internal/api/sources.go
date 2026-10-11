@@ -498,6 +498,9 @@ func (s *Server) saveService(w http.ResponseWriter, r *http.Request) {
 			e = pgx.ErrNoRows
 		}
 	}
+	if e == nil && !in.Monitoring {
+		e = cancelInboundServiceReceipts(r.Context(), tx, ws, id)
+	}
 	if e == nil {
 		_, e = tx.Exec(r.Context(), `INSERT INTO audit_events(workspace_id,action) VALUES($1,'service.mapping_saved')`, ws)
 	}

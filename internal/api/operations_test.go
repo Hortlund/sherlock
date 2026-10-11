@@ -80,6 +80,20 @@ func TestPostgresBackupRestore(t *testing.T) {
 	d := createDestination(t, s, h, cookie, csrf, "https://receiver.example/fixture-secret", true)
 	queued := call(h, "POST", "/api/v1/notifications/destinations/"+d.ID+"/test", map[string]bool{"confirm": true}, cookie, csrf, s.cfg.Origin)
 	requireCode(t, queued, 202)
+	up := httptest.NewServer(demo.Handler())
+	defer up.Close()
+	s.cfg.DemoURL = up.URL
+	s.policy, _ = connectors.NewPolicy("127.0.0.0/8", "")
+	demoResponse := call(h, "POST", "/api/v1/demo", map[string]any{}, cookie, csrf, s.cfg.Origin)
+	requireCode(t, demoResponse, 201)
+	var boundService Service
+	if e := s.pool.QueryRow(ctx, `SELECT id::text,origin FROM services LIMIT 1`).Scan(&boundService.ID, &boundService.Origin); e != nil {
+		t.Fatal(e)
+	}
+	binding := createInboundTest(t, s, h, cookie, csrf, boundService, true)
+	receiptResponse := sendInbound(h, binding.ID, inboundSecret, "", inboundBody(t, "backup-event"))
+	requireCode(t, receiptResponse, 202)
+	receiptID := bodyMap(t, receiptResponse)["id"].(string)
 	provider := configureAI(t, s, h, cookie, csrf, "openai", "")
 	aiID := queueAITest(t, s, h, cookie, csrf, provider.ID)
 	var schema string
@@ -129,6 +143,14 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if e != nil || string(plain) != "fixture-only" {
 		t.Fatal("backup lost AI provider key", e)
 	}
+	if e = pool.QueryRow(ctx, `SELECT secret FROM inbound_bindings WHERE id=$1`, binding.ID).Scan(&encrypted); e != nil {
+		t.Fatal(e)
+	}
+	plain, e = app.vault.Open(encrypted, ws+":inbound:"+binding.ID)
+	if e != nil || string(plain) != inboundSecret {
+		t.Fatal("backup lost inbound signing secret", e)
+	}
+	inboundState(t, app, receiptID, "skipped")
 	assertAIState(t, app, aiID, "queued")
 	var aiJobs int
 	if e = pool.QueryRow(ctx, `SELECT count(*) FROM river_job WHERE kind='ai_analysis'`).Scan(&aiJobs); e != nil || aiJobs != 1 {

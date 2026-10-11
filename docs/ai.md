@@ -1,6 +1,6 @@
 # OpenAI and Anthropic analysis
 
-Phase 2 Slice B adds an optional structured analysis of an already completed investigation. Both providers use the same report shape: observations, hypotheses with supporting/contradicting evidence, unknowns, and manual checks. The deterministic report remains available. Optional OpenAI/Anthropic proactive triage is also available; see [automation setup](automation.md). Opt-in automatic admission reuses bounded analysis of triggering evidence. Bounded read-only tools and scoped follow-up are implemented in Slice D below; OpenAI Decisions and inbound triggers remain planned.
+Phase 2 Slice B adds an optional structured analysis of an already completed investigation. Both providers use the same report shape: observations, hypotheses with supporting/contradicting evidence, unknowns, and manual checks. The deterministic report remains available. Optional OpenAI/Anthropic proactive triage is also available; see [automation setup](automation.md). Opt-in automatic admission reuses bounded analysis of triggering evidence. Bounded read-only tools and scoped follow-up are implemented in Slice D below; Slice E [signed inbound triggers](inbound.md) collect telemetry before using the same bounded engine; OpenAI Decisions remains planned.
 
 ## Set up a provider
 

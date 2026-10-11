@@ -1,6 +1,6 @@
 # Phase 2 implementation plan
 
-Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; optional OpenAI/Anthropic advisory triage is implemented; opt-in automatic admission is implemented; Slice D bounded tools/follow-up is implemented; Slice E remains planned; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
+Status: Slices A and B implemented and locally verified. Slice C now includes local recommendation rules and activity history; optional OpenAI/Anthropic advisory triage is implemented; opt-in automatic admission is implemented; Slice D bounded tools/follow-up is implemented; Slice E signed inbound triggers are implemented; actual provider and Slack/Discord smoke tests remain deployment checks. The active contract is [SPEC v1.2](../INFRA_SHERLOCK_CODEX_KIT/SPEC.md), especially Sections 14–20. The delivered [v1.1 baseline](../INFRA_SHERLOCK_CODEX_KIT/reference/v1.1/SPEC.md) is preserved unchanged.
 
 The delivered workspace now groups configuration into dedicated Settings sections and separates investigation Report, AI analysis and Run activity views. Editors use focused drawers; the existing A/B workflows remain covered by browser regressions. See [interface direction](design/README.md) and [progress](progress.md).
 
@@ -125,11 +125,14 @@ Result: deeper reactive and proactive investigations using the same bounded engi
 
 Implement the separate signed generic alert endpoint and administrator-managed service bindings, receipt IDs, signature timestamp/replay checks, payload/rate limits, time-window validation, and asynchronous enqueue. Bindings determine workspace/service/policy; inbound data supplies context only. Do not accept an outbound notification envelope back as a new incident.
 
+Delivered: disabled-by-default service/origin bindings, HMAC timestamp/body authentication, durable receipt/job admission, bounded telemetry collection followed by the existing AI/tool engine, revision-based revocation, receipt history, encrypted secret lifecycle and a separate single-worker inbound queue. Automatic investigations and tools retain their independent opt-ins. See [inbound setup and signing](inbound.md); live validation remains deferred.
+
 Acceptance:
 
 - Duplicate verified events reuse the receipt; conflicting IDs, stale signatures, wrong secrets, disabled bindings, and unsupported windows are rejected explicitly.
 - Valid events trigger the same bounded policy and investigation path as manual/proactive work.
 - Receipt/job insertion is atomic and survives restart.
+- Final telemetry dispatch rechecks AI-policy/provider consent revisions; concurrent revocation, including AI disable/re-enable, cannot consume another collection attempt.
 - Documentation includes an exact signing example and distinguishes this generic schema from native Alertmanager or Slack/Discord bot APIs.
 
 Result: external monitoring tools can request reactive investigations without a chat bot.
@@ -155,7 +158,7 @@ Slice B review fixes cover stale provider previews, access to older unresolved c
 - [x] C, third increment: opt-in automatic investigation admission using bounded existing-evidence analysis.
 - [ ] C, remaining: optional Decisions endpoint and live usefulness evaluation.
 - [x] D: tool loop, restart safety, versioned fixture evaluations, and follow-up implemented; verification recorded in progress.
-- [ ] E: signed inbound trigger pipeline verified.
+- [x] E: signed inbound trigger pipeline verified with local fixtures; live validation remains deferred.
 - [x] Existing deterministic demo and all prior regression cases still pass.
 - [ ] Actual provider and notification smoke tests documented, with failures/limits stated.
 

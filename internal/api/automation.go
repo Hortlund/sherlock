@@ -127,6 +127,9 @@ func (s *Server) saveAutomationPolicy(w http.ResponseWriter, r *http.Request) {
 		_, e = tx.Exec(ctx, `UPDATE ai_runs SET state='cancelled',reason='Automation policy changed; pending processing cancelled.',finished_at=now(),payload=NULL,accounting=CASE WHEN started_at IS NULL THEN 'settled' ELSE accounting END WHERE workspace_id=$1 AND purpose IN ('triage','automatic') AND state IN ('queued','analyzing')`, ws)
 	}
 	if e == nil {
+		e = cancelInboundRuns(ctx, tx, ws, "")
+	}
+	if e == nil {
 		_, e = tx.Exec(ctx, `INSERT INTO audit_events(workspace_id,action) VALUES($1,'automation.policy_changed')`, ws)
 	}
 	if e == nil {

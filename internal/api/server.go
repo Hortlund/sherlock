@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	s.notificationRoutes(mux)
 	s.aiRoutes(mux)
 	s.automationRoutes(mux)
+	s.inboundRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { s.fail(w, r, 404, "not_found", "Endpoint not found.") })
 	mux.HandleFunc("/", s.static)
 	return s.middleware(mux)
@@ -139,10 +140,11 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
-		// An exact configured Origin is required even on unauthenticated mutations,
-		// preventing login CSRF and forwarded-Host confusion behind a reverse proxy.
+		// Mutations, including login, require the exact configured Origin. Only
+		// the separately HMAC-authenticated inbound endpoint is exempt.
 		if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
-			if r.Header.Get("Origin") != s.cfg.Origin || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			signedInbound := r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/v1/inbound/alerts/") && len(strings.TrimPrefix(r.URL.Path, "/api/v1/inbound/alerts/")) == 36 && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/inbound/alerts/"), "/")
+			if !signedInbound && (r.Header.Get("Origin") != s.cfg.Origin || r.Header.Get("Sec-Fetch-Site") == "cross-site") {
 				s.fail(w, r, 403, "origin_denied", "Request origin is not allowed.")
 				return
 			}

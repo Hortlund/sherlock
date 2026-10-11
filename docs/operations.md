@@ -46,7 +46,7 @@ docker compose exec -T postgres pg_restore -U sherlock -d sherlock --no-owner --
 docker compose up --build -d --wait app
 ```
 
-Do not restore over an existing initialized database. Verify `/readyz`, login, service mappings, evidence, and a source test. Restored River jobs remain durable; expired run deadlines fail explicitly. The test suite executes a real pg_dump/pg_restore of an isolated installation, then opens it with the original encryption key and checks the restored session, audit history, encrypted notification URL/signing secret and provider API key, and pending notification/AI jobs. Restored unexpired notification and undispatched AI jobs may resume sending; isolate outbound connectivity during a restore rehearsal to avoid real messages or paid calls. AI invocations with a persisted dispatch intent are not replayed; their uncertain reservations remain.
+Do not restore over an existing initialized database. Verify `/readyz`, login, service mappings, evidence, and a source test. Restored River jobs remain durable; expired run deadlines fail explicitly. The test suite executes a real pg_dump/pg_restore of an isolated installation, then opens it with the original encryption key and checks the restored session, audit history, encrypted notification URL/signing secret, inbound signing secret/receipt, and provider API key, and pending notification/AI jobs. Restored unexpired notification, inbound admission and undispatched AI jobs may resume processing/sending; isolate outbound connectivity during a restore rehearsal to avoid real messages or paid calls. AI invocations with a persisted dispatch intent are not replayed; their uncertain reservations remain.
 
 ## Encryption-key rotation
 
@@ -57,7 +57,7 @@ docker compose stop app
 docker compose run --rm --no-deps --user 0 --entrypoint sherlock-admin -v /absolute/path/new-key.txt:/run/new-key:ro app --new-key-file /run/new-key
 ```
 
-The command decrypts and validates every live credential before transactionally re-encrypting credentials and the installation sentinel. It prints no key values. After success, replace only `SHERLOCK_ENCRYPTION_KEY` in `.env` with the new file's value and recreate the app. Do not restart with the old key. If interrupted after the transaction commits but before editing `.env`, recover by applying the retained new key. If the transaction fails, keep the old environment. Rotation includes connection credentials, live notification destination URLs/signing secrets, and live OpenAI/Anthropic keys. Test a source and explicitly selected notification receiver/provider after restarting; retain the prior key only as required for decrypting older backups. The integration suite verifies successful rotation, old-key rejection and rollback on invalid old keys.
+The command decrypts and validates every live credential before transactionally re-encrypting credentials and the installation sentinel. It prints no key values. After success, replace only `SHERLOCK_ENCRYPTION_KEY` in `.env` with the new file's value and recreate the app. Do not restart with the old key. If interrupted after the transaction commits but before editing `.env`, recover by applying the retained new key. If the transaction fails, keep the old environment. Rotation includes connection credentials, live notification destination URLs/signing secrets, live inbound binding signing secrets, and live OpenAI/Anthropic keys. Test a source and explicitly selected notification receiver/provider after restarting; retain the prior key only as required for decrypting older backups. The integration suite verifies successful rotation, old-key rejection and rollback on invalid old keys.
 
 ## Release checks
 
@@ -68,3 +68,7 @@ Operational JSON is authenticated at `/api/v1/system`; overview indicates stale/
 ## AI provider operations
 
 See [AI setup, budgets, unknown outcomes and retention](ai.md). AI consent defaults off, each service is explicitly allowed, and demo egress is separately opt-in. A synthetic provider test is an explicit potentially billable action. All provider wire/worker/browser checks in the local suite use fixtures; actual API accounts require their own bounded smoke test.
+
+## Inbound monitoring alerts
+
+See [inbound setup and exact signing](inbound.md). Bindings start disabled, use their own request/daily limits and require existing automatic investigation consent. Automatic tools remain a separate opt-in. Receipt history records skipped or revoked work without replaying it later.

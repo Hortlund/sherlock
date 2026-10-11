@@ -92,3 +92,7 @@ Live provider/notification smoke tests and versioned usefulness, factual-error, 
 ### Optional bounded tools
 
 Slice D adds **Allow bounded read-only tools for automatic investigations**, stored as `tools_enabled` and defaulting to false. Existing automatic consent does not enable it. With both opt-ins, the same durable admission creates a bounded step run that may retrieve evidence or recollect mapped Prometheus/Loki data only for the original scan's incident/comparison windows. Up to 6 provider attempts, 6 tool requests, 12 telemetry attempts, 30,000 reserved input / 8,000 reserved output tokens and 180 seconds from enqueue apply, with cumulative per-run/daily cost admission before each provider step. There are no automatic paid retries. See [tool execution and follow-up](ai.md#bounded-tools-and-scoped-follow-up-slice-d) for persistence, cancellation and privacy behavior. Off remains the default and stops automatic tool dispatch; manual follow-up never changes automation settings.
+
+## Signed external monitoring requests
+
+[Inbound alert bindings](inbound.md) reuse automatic mode, recurring consent, selected monitored services, origin/provider consent, service cooldowns and AI budgets. A binding starts disabled and does not enable any automation or tool setting. Verified eligible alerts collect bounded telemetry before AI admission; external titles never reach the model. Receipts received while Off or without consent are skipped permanently. Automatic tools require the existing separate opt-in.

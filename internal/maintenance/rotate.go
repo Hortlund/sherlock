@@ -34,7 +34,7 @@ func Rotate(ctx context.Context, pool *pgxpool.Pool, oldKey, newKey []byte) erro
 	if e != nil || string(plain) != "sherlock-key-check" {
 		return errors.New("original encryption key does not match")
 	}
-	rows, e := tx.Query(ctx, `SELECT id::text,workspace_id::text,credential,'connections' FROM connections WHERE NOT deleted UNION ALL SELECT id::text,workspace_id::text,secret,'notification_destinations' FROM notification_destinations WHERE NOT deleted UNION ALL SELECT id::text,workspace_id::text,secret,'ai_providers' FROM ai_providers WHERE NOT deleted`)
+	rows, e := tx.Query(ctx, `SELECT id::text,workspace_id::text,credential,'connections' FROM connections WHERE NOT deleted UNION ALL SELECT id::text,workspace_id::text,secret,'notification_destinations' FROM notification_destinations WHERE NOT deleted UNION ALL SELECT id::text,workspace_id::text,secret,'ai_providers' FROM ai_providers WHERE NOT deleted UNION ALL SELECT id::text,workspace_id::text,secret,'inbound_bindings' FROM inbound_bindings WHERE NOT deleted`)
 	if e != nil {
 		return e
 	}
@@ -50,6 +50,9 @@ func Rotate(ctx context.Context, pool *pgxpool.Pool, oldKey, newKey []byte) erro
 			return e
 		}
 		aad := v.ws + ":" + v.id
+		if v.table == "inbound_bindings" {
+			aad = v.ws + ":inbound:" + v.id
+		}
 		if v.table == "notification_destinations" {
 			aad = v.ws + ":notification:" + v.id
 		}
@@ -71,6 +74,9 @@ func Rotate(ctx context.Context, pool *pgxpool.Pool, oldKey, newKey []byte) erro
 	}
 	for _, v := range all {
 		query := `UPDATE connections SET credential=$3 WHERE workspace_id=$1 AND id=$2`
+		if v.table == "inbound_bindings" {
+			query = `UPDATE inbound_bindings SET secret=$3 WHERE workspace_id=$1 AND id=$2`
+		}
 		if v.table == "notification_destinations" {
 			query = `UPDATE notification_destinations SET secret=$3 WHERE workspace_id=$1 AND id=$2`
 		}

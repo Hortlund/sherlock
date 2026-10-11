@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Sherlock API
   version: 0.2.0
-  description: Mutations require application/json and the configured Origin. Authenticated mutations also require X-CSRF-Token from /me. HTTPS installations use the __Host-sherlock_session cookie instead of sherlock_session.
+  description: Mutations require application/json and the configured Origin, except the signed inbound alert endpoint which uses HMAC authentication. Authenticated mutations also require X-CSRF-Token from /me. HTTPS installations use the __Host-sherlock_session cookie instead of sherlock_session.
 servers:
   - url: /
 security:
@@ -2540,8 +2540,131 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
 
+  /api/v1/inbound/bindings:
+    get:
+      summary: List up to 100 inbound bindings without signing secrets
+      responses:
+        '200':
+          description: Workspace bindings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/InboundBinding' } }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Create an explicitly scoped inbound binding (disabled by default)
+      parameters:
+        - { $ref: '#/components/parameters/CSRF' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboundBindingInput' }
+      responses:
+        '200':
+          description: Saved binding; no secret returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboundBinding' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/v1/inbound/bindings/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Save or rotate a binding; cancel pending work from the prior revision
+      description: Service and origin are immutable. Omit or leave signing_secret empty to retain it. Enabling a binding never changes automatic investigation or tool consent.
+      parameters:
+        - { $ref: '#/components/parameters/CSRF' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboundBindingInput' }
+      responses:
+        '200':
+          description: Saved binding with incremented revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboundBinding' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/v1/inbound/bindings/{id}/delete:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Disable binding, erase its secret and copied titles, and cancel pending work
+      parameters:
+        - { $ref: '#/components/parameters/CSRF' }
+      responses:
+        '200': { description: Binding deleted; operational receipts remain until retention }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/inbound/alerts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Receive a signed generic inbound alert
+      description: Requires application/json, at most 16 KiB. X-Sherlock-Signature is v1= plus lowercase HMAC-SHA256 hex over the canonical Unix-seconds timestamp, a dot, and exact UTF-8 body bytes. Timestamps must be within five minutes. Session/Origin/CSRF are not required on this endpoint only. Exact-body retries return the same receipt; event ID conflicts return 409. Acceptance does not promise dispatch. Disabled bindings reject requests; Off and unselected services produce terminal skipped receipts. Payload cannot choose workspace, service, source, model, tools, queries, recipients or policy. Outbound Sherlock and native Alertmanager envelopes are rejected.
+      security:
+        - inboundSignature: []
+      parameters:
+        - { name: X-Sherlock-Timestamp, in: header, required: true, schema: { type: string, pattern: '^[0-9]+$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboundAlert' }
+      responses:
+        '202':
+          description: Durable receipt; duplicate IDs with identical exact body reuse it
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, reused]
+                properties:
+                  id: { type: string, format: uuid }
+                  reused: { type: boolean }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429':
+          description: Binding request limit exceeded
+          headers:
+            Retry-After: { schema: { type: integer }, description: Seconds to wait (60) }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/inbound/receipts:
+    get:
+      summary: List inbound receipt outcomes and investigation/AI links
+      description: Newest first; 50 per page. Titles expire after 24 hours; operational receipts and dedup IDs after 30 days when no linked execution is active. External titles are untrusted context and never forwarded to the model. Reading history never starts processing.
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Receipt history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/InboundReceipt' } }
+                  next_cursor: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
+    inboundSignature: { type: apiKey, in: header, name: X-Sherlock-Signature, description: Timestamp-bound HMAC-SHA256 signature using the binding signing secret }
     session: { type: apiKey, in: cookie, name: sherlock_session }
   parameters:
     CSRF:
@@ -2564,6 +2687,55 @@ components:
               message: { type: string }
               request_id: { type: string }
   schemas:
+    InboundBinding:
+      type: object
+      additionalProperties: false
+      required: [service_id, name, origin, per_minute, daily_limit]
+      properties:
+        id: { type: string }
+        service_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        origin: { type: string, enum: [demo, live] }
+        enabled: { type: boolean, default: false }
+        revision: { type: integer, minimum: 0 }
+        per_minute: { type: integer, minimum: 1, maximum: 60 }
+        daily_limit: { type: integer, minimum: 1, maximum: 100 }
+    InboundBindingInput:
+      type: object
+      additionalProperties: false
+      required: [binding]
+      properties:
+        binding: { $ref: '#/components/schemas/InboundBinding' }
+        signing_secret: { type: string, maxLength: 256, writeOnly: true, description: Required on creation; nonempty secrets must be 32–256 bytes without CR/LF. Blank preserves an existing secret. }
+    InboundAlert:
+      type: object
+      additionalProperties: false
+      required: [version, event_id, start, end]
+      properties:
+        version: { type: string, const: inbound-v1 }
+        event_id: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+        title: { type: string, maxLength: 512, description: Optional untrusted context, at most 512 UTF-8 bytes without NUL characters; redacted before persistence and excluded from model input }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time, description: No future times; at most seven days old. Incident duration 5–60 minutes, at most two hours with configured baseline. Unsupported windows return 422 without substitution. }
+    InboundReceipt:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string }
+        binding_id: { type: string, format: uuid }
+        binding_name: { type: string }
+        service_id: { type: string, format: uuid }
+        state: { type: string, enum: [queued, collecting, collected, ai_queued, skipped, cancelled, failed] }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        title: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        investigation_id: { type: string }
+        investigation_state: { type: string }
+        ai_run_id: { type: string }
+        ai_state: { type: string }
+        ai_reason: { type: string }
     AutomationPolicy:
       type: object
       required: [mode, services, allow_demo, cooldown_minutes, growth_multiplier, revision]

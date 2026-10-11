@@ -67,6 +67,9 @@ func (s *Server) pruneLinkedAIHistory(ctx context.Context, statement string) err
 
 // Erase expired payloads while retaining tombstones for finding/report citations.
 func (s *Server) Retain(ctx context.Context) error {
+	if e := s.retainInbound(ctx); e != nil {
+		return e
+	}
 	if e := s.retainAutomation(ctx); e != nil {
 		return e
 	}

@@ -58,7 +58,8 @@ func (s *Server) initJobs(ctx context.Context) error {
 	river.AddWorker(workers, &deepToolWorker{server: s})
 	river.AddWorker(workers, &automationWorker{server: s})
 	river.AddWorker(workers, &automaticWorker{server: s})
-	s.jobs, e = river.NewClient(driver, &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"default": {MaxWorkers: 4}, "notifications": {MaxWorkers: 2}, "ai": {MaxWorkers: 2}, "ai_tools": {MaxWorkers: 2}, "automation": {MaxWorkers: 1}}, JobTimeout: 100 * time.Second, RescueStuckJobsAfter: 4 * time.Minute, SoftStopTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(discardWriter{}, nil))})
+	river.AddWorker(workers, &inboundWorker{server: s})
+	s.jobs, e = river.NewClient(driver, &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"default": {MaxWorkers: 4}, "notifications": {MaxWorkers: 2}, "ai": {MaxWorkers: 2}, "ai_tools": {MaxWorkers: 2}, "automation": {MaxWorkers: 1}, "inbound": {MaxWorkers: 1}}, JobTimeout: 100 * time.Second, RescueStuckJobsAfter: 4 * time.Minute, SoftStopTimeout: 5 * time.Second, Logger: slog.New(slog.NewTextHandler(discardWriter{}, nil))})
 	return e
 }
 
@@ -239,12 +240,12 @@ func (s *Server) execute(parent context.Context, a runArgs) error {
 		defer c()
 		_, _ = lock.Exec(ctx, `SELECT pg_advisory_unlock(hashtextextended($1,7319))`, a.RunID)
 	}()
-	var state, kind string
+	var state, kind, receipt string
 	var snap, conf []byte
 	var start, end time.Time
 	var deadline *time.Time
 	var scheduled bool
-	e = s.pool.QueryRow(parent, `SELECT state,kind,snapshot,config,window_start,window_end,deadline,scheduled FROM runs WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.RunID).Scan(&state, &kind, &snap, &conf, &start, &end, &deadline, &scheduled)
+	e = s.pool.QueryRow(parent, `SELECT state,kind,snapshot,config,window_start,window_end,deadline,scheduled,COALESCE(inbound_receipt_id::text,'') FROM runs WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.RunID).Scan(&state, &kind, &snap, &conf, &start, &end, &deadline, &scheduled, &receipt)
 	if e != nil {
 		return e
 	}
@@ -268,8 +269,37 @@ func (s *Server) execute(parent context.Context, a runArgs) error {
 	}
 	ctx, cancel := context.WithDeadline(parent, *deadline)
 	defer cancel()
+	if receipt != "" {
+		if _, _, _, err := s.inboundScope(parent, s.pool, a.WorkspaceID, receipt); err != nil {
+			return s.finish(parent, a, "cancelled", RunResult{Issues: []string{"Inbound scope or consent changed."}})
+		}
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		done := make(chan struct{})
+		defer func() { stopWatch(); <-done }()
+		go func() {
+			defer close(done)
+			ticker := time.NewTicker(250 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-watchCtx.Done():
+					return
+				case <-ticker.C:
+					if _, _, _, err := s.inboundScope(watchCtx, s.pool, a.WorkspaceID, receipt); err != nil {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
 	ctx = connectors.WithRequestGuard(ctx, func(ctx context.Context) error {
-		tag, e := s.pool.Exec(ctx, `UPDATE runs SET requests=requests+1 WHERE workspace_id=$1 AND id=$2 AND NOT cancelled AND requests<12 AND deadline>now() AND EXISTS(SELECT 1 FROM services WHERE workspace_id=$1 AND id=$3 AND revision=$4 AND (NOT $5 OR monitoring))`, a.WorkspaceID, a.RunID, v.ID, v.Revision, scheduled)
+		if receipt != "" {
+			if _, _, _, err := s.inboundScope(ctx, s.pool, a.WorkspaceID, receipt); err != nil {
+				return err
+			}
+		}
+		tag, e := s.pool.Exec(ctx, `UPDATE runs SET requests=requests+1 WHERE workspace_id=$1 AND id=$2 AND NOT cancelled AND requests<12 AND deadline>now() AND `+inboundCollectionDispatchScope+` AND EXISTS(SELECT 1 FROM services WHERE workspace_id=$1 AND id=$3 AND revision=$4 AND (NOT $5 OR monitoring))`, a.WorkspaceID, a.RunID, v.ID, v.Revision, scheduled)
 		if e != nil {
 			return e
 		}
@@ -338,6 +368,25 @@ func (s *Server) finish(ctx context.Context, a runArgs, state string, result Run
 		return e
 	}
 	defer tx.Rollback(ctx)
+	var receipt string
+	if e = tx.QueryRow(ctx, `SELECT COALESCE(inbound_receipt_id::text,'') FROM runs WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.RunID).Scan(&receipt); e != nil {
+		return e
+	}
+	if receipt != "" {
+		if e = lockInboundReceipt(ctx, tx, a.WorkspaceID, receipt); e != nil {
+			return e
+		}
+		if e = aiWorkspaceLock(ctx, tx, a.WorkspaceID); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `SELECT id FROM inbound_receipts WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, a.WorkspaceID, receipt); e != nil {
+			return e
+		}
+		if _, _, _, err := s.inboundScope(ctx, tx, a.WorkspaceID, receipt); err != nil {
+			state = "cancelled"
+			result = RunResult{Issues: []string{"Inbound scope or consent changed; output withheld."}}
+		}
+	}
 	raw, _ := json.Marshal(result)
 	tag, e := tx.Exec(ctx, `UPDATE runs SET state=$3,result=$4,finished_at=now() WHERE workspace_id=$1 AND id=$2 AND NOT cancelled AND state IN ('queued','collecting','evaluating','reporting')`, a.WorkspaceID, a.RunID, state, raw)
 	if e != nil {
@@ -365,6 +414,9 @@ func (s *Server) finish(ctx context.Context, a runArgs, state string, result Run
 				return e
 			}
 		}
+	}
+	if e = s.finishInbound(ctx, tx, a, receipt, state); e != nil {
+		return e
 	}
 	return tx.Commit(ctx)
 }

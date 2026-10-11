@@ -15,7 +15,7 @@ import (
 
 type deepRun struct {
 	Provider, Service, Run, Batch, Purpose, State, Digest string
-	Parent, Question                                      string
+	Parent, Question, Receipt                             string
 	Tools                                                 bool
 	ProviderRevision, PolicyRevision                      int
 	Evidence                                              []string
@@ -24,7 +24,7 @@ type deepRun struct {
 
 func loadDeep(ctx context.Context, q aiDB, a deepArgs) (deepRun, error) {
 	var r deepRun
-	e := q.QueryRow(ctx, `SELECT provider_id::text,service_id::text,run_id::text,COALESCE(automation_batch_id::text,''),purpose,state,digest,COALESCE(parent_ai_run_id::text,''),COALESCE(question,''),tools_enabled,provider_revision,policy_revision,evidence_ids,deadline,expires_at FROM ai_runs WHERE workspace_id=$1 AND id::text=$2 AND deep`, a.WorkspaceID, a.ID).Scan(&r.Provider, &r.Service, &r.Run, &r.Batch, &r.Purpose, &r.State, &r.Digest, &r.Parent, &r.Question, &r.Tools, &r.ProviderRevision, &r.PolicyRevision, &r.Evidence, &r.Deadline, &r.Expires)
+	e := q.QueryRow(ctx, `SELECT provider_id::text,service_id::text,run_id::text,COALESCE(automation_batch_id::text,''),purpose,state,digest,COALESCE(parent_ai_run_id::text,''),COALESCE(question,''),tools_enabled,provider_revision,policy_revision,evidence_ids,deadline,expires_at,COALESCE(inbound_receipt_id::text,'') FROM ai_runs WHERE workspace_id=$1 AND id::text=$2 AND deep`, a.WorkspaceID, a.ID).Scan(&r.Provider, &r.Service, &r.Run, &r.Batch, &r.Purpose, &r.State, &r.Digest, &r.Parent, &r.Question, &r.Tools, &r.ProviderRevision, &r.PolicyRevision, &r.Evidence, &r.Deadline, &r.Expires, &r.Receipt)
 	return r, e
 }
 func (s *Server) checkDeep(ctx context.Context, q aiDB, a deepArgs, r deepRun) (AIProvider, AIPolicy, aiInput, error) {
@@ -41,12 +41,19 @@ func (s *Server) checkDeep(ctx context.Context, q aiDB, a deepArgs, r deepRun) (
 		return p, ap, aiInput{}, bad
 	}
 	if r.Purpose == "automatic" {
-		policy, err := loadAutomationPolicy(ctx, q, a.WorkspaceID)
-		if err != nil || !policy.ToolsEnabled || r.Batch == "" {
-			return p, ap, aiInput{}, bad
-		}
-		if _, e = s.buildRecommendationInput(ctx, q, a.WorkspaceID, r.Batch, p, true); e != nil {
-			return p, ap, aiInput{}, bad
+		if r.Receipt != "" {
+			_, _, policy, err := s.inboundScope(ctx, q, a.WorkspaceID, r.Receipt)
+			if err != nil || policy.InvestigationProviderID != p.ID || (r.Tools && !policy.ToolsEnabled) {
+				return p, ap, aiInput{}, bad
+			}
+		} else {
+			policy, err := loadAutomationPolicy(ctx, q, a.WorkspaceID)
+			if err != nil || !policy.ToolsEnabled || r.Batch == "" {
+				return p, ap, aiInput{}, bad
+			}
+			if _, e = s.buildRecommendationInput(ctx, q, a.WorkspaceID, r.Batch, p, true); e != nil {
+				return p, ap, aiInput{}, bad
+			}
 		}
 	}
 	in := aiStart{Tools: r.Tools, Parent: r.Parent, Question: r.Question}
@@ -95,7 +102,12 @@ func (s *Server) executeDeep(ctx context.Context, a deepArgs) error {
 		if err != nil {
 			return nil, err
 		}
-		if err = lockAIExecutionScope(c, tx, a.WorkspaceID, r.Service, r.Batch); err == nil {
+		if r.Receipt != "" {
+			err = lockInboundReceipt(c, tx, a.WorkspaceID, r.Receipt)
+		} else {
+			err = lockAIExecutionScope(c, tx, a.WorkspaceID, r.Service, r.Batch)
+		}
+		if err == nil {
 			err = aiWorkspaceLock(c, tx, a.WorkspaceID)
 		}
 		if err != nil {
@@ -208,7 +220,7 @@ func (s *Server) executeDeep(ctx context.Context, a deepArgs) error {
 	// Final check is shared with cancellation and policy saves at the same boundary
 	// as the single-call engine. No transaction is held across network IO.
 	var allowed bool
-	e = conn.QueryRow(callCtx, `SELECT state='analyzing' AND NOT cancel_requested AND deadline>now() FROM ai_runs WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.ID).Scan(&allowed)
+	e = conn.QueryRow(callCtx, `SELECT state='analyzing' AND NOT cancel_requested AND deadline>now() AND `+inboundAIDispatchScope+` FROM ai_runs WHERE workspace_id=$1 AND id=$2`, a.WorkspaceID, a.ID).Scan(&allowed)
 	result := ai.Result{State: "cancelled", Reason: "Stopped before dispatch.", UsageKnown: true}
 	var collected []deepEvidence
 	var toolErr error
@@ -448,7 +460,7 @@ func (s *Server) collectDeep(ctx context.Context, a deepArgs, r deepRun, v Servi
 			return err
 		}
 		// Every underlying attempt, including the collector's retry, consumes budget.
-		tag, err := s.pool.Exec(guardCtx, `UPDATE ai_runs SET telemetry_attempts=telemetry_attempts+1 WHERE workspace_id=$1 AND id=$2 AND state='analyzing' AND NOT cancel_requested AND deadline>now() AND telemetry_attempts<12 AND EXISTS(SELECT 1 FROM connections WHERE workspace_id=$1 AND id=$3 AND revision=$4 AND enabled AND NOT deleted)`, a.WorkspaceID, a.ID, sourceID, c.Revision)
+		tag, err := s.pool.Exec(guardCtx, `UPDATE ai_runs SET telemetry_attempts=telemetry_attempts+1 WHERE workspace_id=$1 AND id=$2 AND state='analyzing' AND NOT cancel_requested AND deadline>now() AND telemetry_attempts<12 AND `+inboundAIDispatchScope+` AND EXISTS(SELECT 1 FROM connections WHERE workspace_id=$1 AND id=$3 AND revision=$4 AND enabled AND NOT deleted)`, a.WorkspaceID, a.ID, sourceID, c.Revision)
 		if err != nil {
 			return err
 		}

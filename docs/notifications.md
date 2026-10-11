@@ -1,6 +1,6 @@
 # Notifications
 
-Go + PostgreSQL/River deliver factual alerts independently of AI. Configure them in **Settings → Notifications**. Slack incoming webhooks, Discord webhooks, and signed generic JSON receivers are supported. This is outbound delivery; chat commands, replies, AI enrichment, and inbound alert triggers remain later Phase 2 slices.
+Go + PostgreSQL/River deliver factual alerts independently of AI. Configure them in **Settings → Notifications**. Slack incoming webhooks, Discord webhooks, and signed generic JSON receivers are supported. This is outbound delivery. [Signed inbound alert triggers](inbound.md) are available separately in Slice E; chat commands, replies and AI enrichment remain later work.
 
 ## Connect a destination
 
